@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
 import { downloadImage } from '@/utils/download'
 import { useTaskStore } from '@/stores/task'
+import type { OutputRun } from '@/types'
 import RatioSelector from '@/components/RatioSelector.vue'
 import BeforeAfterSlider from '@/components/BeforeAfterSlider.vue'
 import HistoryGallery from '@/components/HistoryGallery.vue'
@@ -59,6 +60,14 @@ watch(
 
 // 放大历史选中预览：有原图副本(source) → 滑块对比；否则单图
 const historyPreview = ref<{ url: string; stamp: string; image: string; source: string } | null>(null)
+const galleryRef = ref<InstanceType<typeof HistoryGallery> | null>(null)
+
+// 初始加载（无任何预览时）自动预览最近一条放大历史，对齐文生图/编辑页
+function onHistoryLoaded(runs: OutputRun[]) {
+  if (historyPreview.value || originalUrl.value || store.lastResult?.outputs?.length) return
+  const first = runs.find((r) => r.images.length)
+  if (first) galleryRef.value?.selectRun(first.stamp)
+}
 
 function onHistorySelect(p: { url: string; stamp: string; image: string; prompt: string; pinned: boolean; source?: string }) {
   historyPreview.value = { url: p.url, stamp: p.stamp, image: p.image, source: p.source || '' }
@@ -238,8 +247,10 @@ async function submit() {
         <!-- 右（1fr）：放大历史 -->
         <div class="history-area">
           <HistoryGallery
+            ref="galleryRef"
             type="upscale"
             title="放大历史"
+            @loaded="onHistoryLoaded"
             @select="onHistorySelect"
             @goto="(p: any) => $router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })"
           />

@@ -102,6 +102,7 @@ async def submit_edit(
     images: Optional[List[UploadFile]] = File(None),  # 多图融合（多张上传）
     src_stamp: Optional[str] = Form(None),
     src_image: Optional[str] = Form(None),
+    src_images: Optional[str] = Form(None),  # 多图融合历史重新提交：逗号分隔的文件名列表（配合 src_stamp）
     mark: Optional[UploadFile] = File(None),
     mask: Optional[UploadFile] = File(None),
     annotation_style: str = Form("circle"),
@@ -115,12 +116,20 @@ async def submit_edit(
         raise HTTPException(status_code=400, detail={"code": "INVALID_PARAM", "message": f"不支持的模型: {model}"})
     has_single = image is not None or (src_stamp and src_image)
     multi = [f for f in (images or []) if f is not None]
-    if not has_single and not multi:
+    # 多图服务端引用（融合历史重新提交）：从历史批次目录解析素材文件
+    src_list = [s.strip() for s in (src_images or "").split(",") if s.strip()]
+    if src_list and not src_stamp:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_PARAM", "message": "多图引用需要 src_stamp"})
+    if not has_single and not multi and not src_list:
         raise HTTPException(status_code=400, detail={"code": "INVALID_PARAM", "message": "需要上传图片或指定 src_stamp/src_image"})
     # 先落盘上传文件，再提交任务（避免 worker 竞态读到未写入的文件路径）
     pre_task = manager.pre_register("edit")
     try:
-        if multi:
+        if src_list:
+            # 融合历史引用：直接使用服务端素材文件，不重复落盘
+            image_paths = [_resolve_src(src_stamp, s) for s in src_list]
+            mark_path = mask_path = None
+        elif multi:
             image_paths = [_save_upload(f, pre_task.id, f"img{i}") for i, f in enumerate(multi)]
             mark_path = mask_path = None
         else:
@@ -137,7 +146,7 @@ async def submit_edit(
             "composite": composite,
             "feather": feather,
         }
-        if multi:
+        if src_list or multi:
             payload["_image_paths"] = [str(p) for p in image_paths]
         else:
             payload["_image_path"] = str(image_path)

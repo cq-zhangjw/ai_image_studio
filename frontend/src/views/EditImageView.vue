@@ -27,6 +27,9 @@ const srcImage = ref('')
 const prompt = ref('')
 const imageFile = ref<File | null>(null)
 const fusionFiles = ref<(File | null)[]>(Array(9).fill(null))
+// 融合历史素材还原（服务端引用模式）：九宫格显示历史素材 URL，提交时用 src_stamp + src_images 引用
+const fusionSrcMode = ref(false)
+const fusionSrcUrls = ref<string[]>(Array(9).fill(''))
 const model = ref('qwen-image-2.1')
 const steps = ref(24)
 const seed = ref(0) // 0 = 随机
@@ -64,13 +67,19 @@ function onImage(f: File) {
 
 function onFusionFile(i: number, f: File) {
   fusionFiles.value[i] = f
+  // 用户重新上传素材 → 退出历史引用模式
+  fusionSrcMode.value = false
+  fusionSrcUrls.value = []
 }
 
 function removeFusion(i: number) {
   fusionFiles.value[i] = null
+  fusionSrcUrls.value[i] = ''
 }
 
+// 九宫格预览：历史引用素材 URL 优先；否则本地上传文件
 function fusionSlotUrl(i: number): string {
+  if (fusionSrcUrls.value[i]) return fusionSrcUrls.value[i]
   const f = fusionFiles.value[i]
   return f ? URL.createObjectURL(f) : ''
 }
@@ -79,14 +88,23 @@ function fusionUrlOf(f: File): string {
   return URL.createObjectURL(f)
 }
 
-// 多图融合时素材预览集合
+// 多图融合时素材预览集合（本地文件；历史引用模式用 fusionSrcUrls）
 const fusionUploaded = computed(() => fusionFiles.value.filter((x) => x) as File[])
+// 素材计数（结果区）：历史引用 → 引用素材数；否则本地上传数
+const fusionCount = computed(() => {
+  if (fusionSrcMode.value && fusionSrcUrls.value.some(Boolean)) {
+    return fusionSrcUrls.value.filter(Boolean).length
+  }
+  return fusionUploaded.value.length
+})
 
-// 提交成功后自动对比展示
+// 提交成功后自动对比展示（用户正在浏览历史时不打断，避免重置为最新结果）
+const viewingHistory = ref(false)
+const curStamp = ref('')
 watch(
   () => store.lastResult,
   (r) => {
-    if (r?.outputs?.length && store.lastResult?.taskId === latestTask.value?.id) {
+    if (r?.outputs?.length && store.lastResult?.taskId === latestTask.value?.id && !viewingHistory.value) {
       resultUrl.value = assetUrl(r.outputs[0])
       // 生图结束：滑块回到正中间
       nextTick(() => sliderRef.value?.setPos(50))
@@ -140,6 +158,35 @@ const sliderRef = ref<InstanceType<typeof BeforeAfterSlider> | null>(null)
 const histRuns = ref<OutputRun[]>([])
 const curHistIndex = ref(-1)
 
+// 多图融合历史：任务 payload 含 _image_paths（多图）；单图编辑无 → 用于隔离两侧历史
+function isFusionRun(r: OutputRun | null | undefined): boolean {
+  const p = ((r?.params ?? {}) as Record<string, unknown>)
+  const paths = p._image_paths
+  return Array.isArray(paths) && paths.length > 0
+}
+// 当前模式可见的历史（单图编辑 / 多图融合互相隔离）
+const modeRuns = computed(() =>
+  histRuns.value.filter((r) => (mode.value === 'fusion') === isFusionRun(r)),
+)
+// 传给 HistoryGallery 的过滤：已完成记录按模式隔离；进行中占位任务始终显示
+const galleryFilter = computed(() => (r: OutputRun) =>
+  r.stamp.startsWith('task:') || (mode.value === 'fusion') === isFusionRun(r),
+)
+// 切换模式 → 浏览对应模式历史（默认选中第一组）；清空跨模式残留（结果/历史原图），素材各自独立保留
+watch(mode, () => {
+  viewingHistory.value = true
+  curStamp.value = ''
+  resultUrl.value = ''
+  histBefore.value = ''
+  if (modeRuns.value.length) {
+    curHistIndex.value = 0
+    const r = modeRuns.value[0]
+    galleryRef.value?.selectRun(r.stamp, r.images[0])
+  } else {
+    curHistIndex.value = -1
+  }
+})
+
 // 批次号 → YYYY/MM/DD hh:mm:ss（stamp 即本地生成时刻，直接格式化避免时区偏差）
 function fmtStampDate(stamp: string | undefined): string {
   if (!stamp) return ''
@@ -150,8 +197,8 @@ function fmtStampDate(stamp: string | undefined): string {
 
 // 当前预览条目的信息（历史选中优先，否则最新任务）
 const currentRun = computed<OutputRun | null>(() => {
-  if (curHistIndex.value >= 0 && curHistIndex.value < histRuns.value.length) {
-    return histRuns.value[curHistIndex.value]
+  if (curHistIndex.value >= 0 && curHistIndex.value < modeRuns.value.length) {
+    return modeRuns.value[curHistIndex.value]
   }
   return null
 })
@@ -175,29 +222,63 @@ function onHistoryLoaded(runs: OutputRun[]) {
   histRuns.value = runs.filter((r) => !r.stamp.startsWith('task:'))
   // 外部跳转带入的图优先展示，不自动选中最新历史（避免覆盖带入图）
   if (jumpedFromQuery.value) return
-  if (histRuns.value.length && (curHistIndex.value < 0 || curHistIndex.value >= histRuns.value.length)) {
+  if (!modeRuns.value.length) return
+  // 用户正在浏览历史：按 stamp 保持当前选择（新批次插入顶部时 index 会漂移）
+  if (viewingHistory.value && curStamp.value) {
+    const idx = modeRuns.value.findIndex((r) => r.stamp === curStamp.value)
+    if (idx >= 0) {
+      curHistIndex.value = idx
+      return
+    }
+    // 当前记录已被删除 → 回退选最新
+  }
+  if (curHistIndex.value < 0 || curHistIndex.value >= modeRuns.value.length) {
     curHistIndex.value = 0
-    const r = histRuns.value[0]
+    const r = modeRuns.value[0]
+    curStamp.value = r.stamp
     galleryRef.value?.selectRun(r.stamp, r.images[0])
   }
 }
 
 function navHistory(dir: 1 | -1) {
-  const n = histRuns.value.length
+  const n = modeRuns.value.length
   if (!n) return
+  viewingHistory.value = true
   curHistIndex.value = ((curHistIndex.value < 0 ? 0 : curHistIndex.value) + dir + n) % n
-  const r = histRuns.value[curHistIndex.value]
+  const r = modeRuns.value[curHistIndex.value]
+  curStamp.value = r.stamp
   galleryRef.value?.selectRun(r.stamp, r.images[0])
 }
 
-function onSelect(p: { url: string; stamp: string; image: string; prompt: string; source?: string; params?: Record<string, unknown> | null }) {
+function onSelect(p: { url: string; stamp: string; image: string; prompt: string; source?: string; sources?: string[]; params?: Record<string, unknown> | null }) {
+  // 历史条目与当前模式不匹配 → 自动切换对应模式
+  const want = isFusionRun(histRuns.value.find((r) => r.stamp === p.stamp)) ? 'fusion' : 'single'
+  if (mode.value !== want) mode.value = want
   resultUrl.value = p.url
   histBefore.value = p.source ? assetUrl(`/api/outputs/${p.stamp}/${p.source}`) : ''
+  viewingHistory.value = true
   // 同步当前条目索引（供预览信息行显示该条目的时间/模型/指令）
-  const idx = histRuns.value.findIndex((r) => r.stamp === p.stamp)
-  if (idx >= 0) curHistIndex.value = idx
+  const idx = modeRuns.value.findIndex((r) => r.stamp === p.stamp)
+  if (idx >= 0) {
+    curHistIndex.value = idx
+    curStamp.value = p.stamp
+  }
+  // 融合历史：素材还原到九宫格（服务端引用模式，提交时用 src_stamp + src_images）
+  if (mode.value === 'fusion') {
+    if (p.sources?.length) {
+      fusionSrcMode.value = true
+      srcStamp.value = p.stamp
+      fusionSrcUrls.value = Array(9).fill('')
+      p.sources.forEach((s, si) => {
+        if (si < 9) fusionSrcUrls.value[si] = assetUrl(`/api/outputs/${p.stamp}/${s}`)
+      })
+    } else {
+      fusionSrcMode.value = false
+      fusionSrcUrls.value = []
+    }
+  }
   // 历史选中即进入服务端引用模式：提交时用 src_stamp/src_image 作为原图源
-  if (p.stamp && p.image) {
+  if (p.stamp && p.image && mode.value === 'single') {
     srcMode.value = true
     srcStamp.value = p.stamp
     srcImage.value = p.image
@@ -232,7 +313,8 @@ async function submit() {
       return
     }
   } else {
-    if (!fusionFiles.value.some((f) => f)) {
+    const hasSrc = fusionSrcMode.value && fusionSrcUrls.value.some(Boolean)
+    if (!hasSrc && !fusionFiles.value.some((f) => f)) {
       error.value = '请至少上传一张图片'
       return
     }
@@ -250,8 +332,15 @@ async function submit() {
     form.append('num_inference_steps', String(steps.value))
     if (seed.value) form.append('seed', String(seed.value))
     if (mode.value === 'fusion') {
-      for (const f of fusionFiles.value) {
-        if (f) form.append('images', f)
+      // 历史素材引用：src_stamp + src_images（文件名列）；否则上传文件
+      const srcNames = fusionSrcUrls.value.filter(Boolean).map((u) => u.split('/').pop() ?? '')
+      if (fusionSrcMode.value && srcStamp.value && srcNames.length) {
+        form.append('src_stamp', srcStamp.value)
+        form.append('src_images', srcNames.join(','))
+      } else {
+        for (const f of fusionFiles.value) {
+          if (f) form.append('images', f)
+        }
       }
     } else if (srcMode.value && srcStamp.value && srcImage.value) {
       form.append('src_stamp', srcStamp.value)
@@ -262,6 +351,9 @@ async function submit() {
     const res = await api.submitEdit(form)
     store.track(res.task_id, 'edit')
     latestTask.value = store.tasks[res.task_id]
+    // 回到"最新结果"态：任务完成后自动回传展示；退出历史浏览
+    viewingHistory.value = false
+    curStamp.value = ''
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -306,6 +398,8 @@ async function submit() {
             <div v-for="i in 9" :key="i" class="fusion-slot">
               <FileDropUpload
                 :preview-url="fusionSlotUrl(i - 1)"
+                :hide-hint="true"
+                :fill="true"
                 @file="(f: File) => onFusionFile(i - 1, f)"
               />
               <button
@@ -362,8 +456,17 @@ async function submit() {
             <template v-if="mode === 'fusion'">
               <div class="fusion-compare">
                 <div class="fc-side fc-materials">
-                  <div class="fc-label">素材（{{ fusionUploaded.length || (histBefore ? 1 : 0) }} 张）</div>
-                  <div v-if="fusionUploaded.length" class="fc-grid">
+                  <div class="fc-label">素材（{{ fusionCount }} 张）</div>
+                  <div v-if="fusionSrcMode && fusionSrcUrls.some(Boolean)" class="fc-grid">
+                    <img
+                      v-for="(u, idx) in fusionSrcUrls.filter(Boolean)"
+                      :key="idx"
+                      :src="u"
+                      class="fc-thumb"
+                      alt="素材"
+                    />
+                  </div>
+                  <div v-else-if="fusionUploaded.length" class="fc-grid">
                     <img
                       v-for="(f, idx) in fusionUploaded"
                       :key="idx"
@@ -371,9 +474,6 @@ async function submit() {
                       class="fc-thumb"
                       alt="素材"
                     />
-                  </div>
-                  <div v-else-if="histBefore" class="fc-grid">
-                    <img :src="histBefore" class="fc-thumb" alt="素材" />
                   </div>
                   <div v-else class="preview-placeholder">上传图片后显示素材</div>
                 </div>
@@ -408,22 +508,22 @@ async function submit() {
             <div v-else class="preview-placeholder">上传原图，描述修改内容，结果将展示在这里</div>
 
             <button
-              v-if="histRuns.length"
+              v-if="modeRuns.length"
               type="button"
               class="nav-btn nav-prev"
               title="上一组（←）"
               @click="navHistory(-1)"
             >‹</button>
             <button
-              v-if="histRuns.length"
+              v-if="modeRuns.length"
               type="button"
               class="nav-btn nav-next"
               title="下一组（→）"
               @click="navHistory(1)"
             >›</button>
           </div>
-          <div v-if="histRuns.length || currentModel || currentStamp" class="preview-meta">
-            <span v-if="histRuns.length" class="preview-count mono">{{ curHistIndex + 1 }}/{{ histRuns.length }}</span>
+          <div v-if="modeRuns.length || currentModel || currentStamp" class="preview-meta">
+            <span v-if="modeRuns.length" class="preview-count mono">{{ curHistIndex + 1 }}/{{ modeRuns.length }}</span>
             <span class="mono preview-stamp">{{ currentStamp }}</span>
             <span v-if="currentModel" class="preview-meta-parts">{{ currentModel }}</span>
           </div>
@@ -435,6 +535,7 @@ async function submit() {
           <HistoryGallery
             ref="galleryRef"
             type="edit"
+            :filter-fn="galleryFilter"
             @loaded="onHistoryLoaded"
             @select="onSelect"
             @goto="(p: any) => $router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })"

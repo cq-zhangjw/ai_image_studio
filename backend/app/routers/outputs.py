@@ -95,12 +95,16 @@ def list_outputs(
         if not shown:
             continue
         total += 1
-        # 原图副本（编辑/放大任务收编时保存 _input_original[_N].png，_ 前缀不进产物列表）：供对比回显
-        source = ""
-        for cand in ("_input_original.png", "_input_original_0.png"):
+        # 原图副本（编辑/放大任务收编时保存 _input_original[_N].png，_ 前缀不进产物列表）：
+        # 单图任务 1 张；多图融合按 _input_original.png / _1 / _2 … 收集，供对比回显与素材还原
+        sources: list[str] = []
+        for idx in range(10):
+            cand = "_input_original.png" if idx == 0 else f"_input_original_{idx}.png"
             if ws.resolve_image(stamp, cand) or (config.OUTPUT_DIR / stamp / cand).is_file():
-                source = cand
+                sources.append(cand)
+            else:
                 break
+        source = sources[0] if sources else ""
         runs.append(
             {
                 "stamp": stamp,
@@ -112,6 +116,7 @@ def list_outputs(
                 "category": rec.get("category", "landscape"),
                 "created_at": rec.get("created_at", ""),
                 "source": source,
+                "sources": sources,
             }
         )
 

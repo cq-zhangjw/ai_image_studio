@@ -80,6 +80,8 @@ export interface OutputRun {
   category: string | null
   created_at: string
   source?: string
+  /** 编辑/放大任务的原图素材列表（多图融合含多张 _input_original 系列） */
+  sources?: string[]
   /** 进行中任务的占位引用（HistoryGallery 合并显示时设置） */
   task?: TaskDetail | null
 }

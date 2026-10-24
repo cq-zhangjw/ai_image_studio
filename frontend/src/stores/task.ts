@@ -88,7 +88,7 @@ export const useTaskStore = defineStore('task', {
         outputs: [],
         created_at: new Date().toISOString(),
       })
-      subscribeTask(taskId, {
+      const es = subscribeTask(taskId, {
         onProgress: (d) => {
           const t = this.tasks[taskId]
           if (!t) return
@@ -108,13 +108,20 @@ export const useTaskStore = defineStore('task', {
           if (d.status === 'succeeded') {
             this.lastResult = { taskId, outputs: d.outputs ?? [] }
           }
+          // 任务进入终态：关闭 SSE 连接，避免 EventSource 自动重连泄漏
+          if (d.status === 'succeeded' || d.status === 'failed') {
+            es.close()
+          }
         },
         onDone: () => {
           /* 流结束，状态已由 onStatus 更新 */
+          es.close()
         },
         onError: () => {
+          // 连接异常即关闭（后端流已结束），防止无限重连
           const t = this.tasks[taskId]
           if (t && t.status === 'queued') t.status = 'failed'
+          es.close()
         },
       })
     },

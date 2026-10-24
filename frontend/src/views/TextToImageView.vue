@@ -216,6 +216,7 @@ function onHistoryLoaded(runs: OutputRun[]) {
 function navHistory(dir: -1 | 1) {
   const p = preview.value
   if (!p) return
+  viewingHistory.value = true
   // 定位当前选中：优先当前预览批次；无则回退最近一次历史（列表头部）
   let cur = curHistIndex.value
   if (cur < 0) cur = 0
@@ -256,11 +257,12 @@ async function togglePreviewPin() {
   }
 }
 
-// 生成成功 → 自动展示最新结果（含多图）
+// 生成成功 → 自动展示最新结果（含多图）；用户浏览历史时不打断
+const viewingHistory = ref(false)
 watch(
   () => store.lastResult,
   (r) => {
-    if (r?.outputs?.length) {
+    if (r?.outputs?.length && !viewingHistory.value) {
       const outs = r.outputs.map(String)
       const stamps = outs.map((o) => String(o).match(/(\d{8}_\d{6})/)?.[1] ?? '')
       const names = outs.map((o) => o.split('/').pop() ?? '')
@@ -382,6 +384,7 @@ onUnmounted(() => {
 
 // 历史缩略图点击：上大图 + 按批次匹配任务参数回填
 async function onHistorySelect(p: { url: string; stamp: string; image: string; prompt: string; pinned: boolean }) {
+  viewingHistory.value = true
   preview.value = {
     urls: [p.url],
     stamps: [p.stamp],
@@ -445,6 +448,8 @@ async function generate() {
     })
     store.track(res.task_id, 'text-to-image')
     latestTask.value = store.tasks[res.task_id]
+    // 回到"最新结果"态：完成后自动回传展示；退出历史浏览
+    viewingHistory.value = false
   } catch (e) {
     error.value = (e as Error).message
   } finally {

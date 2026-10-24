@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, assetUrl } from '@/api/client'
 import { downloadImage } from '@/utils/download'
 import { useTaskStore } from '@/stores/task'
 import type { OutputRun, TaskDetail } from '@/types'
 
 const emit = defineEmits<{
-  (e: 'select', payload: { url: string; stamp: string; image: string; prompt: string; pinned: boolean; source?: string; category?: string; params?: Record<string, unknown> | null }): void
+  (e: 'select', payload: { url: string; stamp: string; image: string; prompt: string; pinned: boolean; source?: string; sources?: string[]; category?: string; params?: Record<string, unknown> | null }): void
   (e: 'goto', payload: { stamp: string; image: string; action: 'upscale' | 'edit' }): void
   (e: 'loaded', runs: OutputRun[]): void
 }>()
@@ -15,6 +15,8 @@ const props = withDefaults(
   defineProps<{
     type?: string
     title?: string
+    /** 过滤已完成记录（如按单图/多图融合隔离）；进行中占位任务始终放行 */
+    filterFn?: (run: OutputRun) => boolean
   }>(),
   { type: '', title: '生成历史' },
 )
@@ -75,7 +77,7 @@ function phMeta(run: OutputRun): string {
 
 const mergedRuns = computed<OutputRun[]>(() => [
   ...activeTasks.value.map(toPlaceholder),
-  ...runs.value,
+  ...(props.filterFn ? runs.value.filter((r) => props.filterFn!(r)) : runs.value),
 ])
 
 // 进行中任务全部进入终态（完成/失败）→ 刷新已完成作品，替换占位
@@ -103,6 +105,9 @@ async function load() {
 }
 
 onMounted(load)
+onUnmounted(() => {
+  if (reloadTimer) clearTimeout(reloadTimer)
+})
 
 function isPinned(run: OutputRun, i: number): boolean {
   return run.pinned?.[i] ?? false
@@ -153,6 +158,7 @@ function select(run: OutputRun, image: string) {
     prompt: run.prompt,
     pinned: isPinned(run, idx >= 0 ? idx : 0),
     source: run.source,
+    sources: run.sources ?? (run.source ? [run.source] : undefined),
     category: run.category ?? '',
     params: (run.params ?? {}) as Record<string, unknown>,
   })
@@ -161,6 +167,11 @@ function select(run: OutputRun, image: string) {
 // 编辑历史双图缩略：before 原图 URL（source）+ after 结果
 function beforeUrl(run: OutputRun): string {
   return run.source ? assetUrl(`${run.path}/${run.source}`) : ''
+}
+
+// 素材列表：多图融合含全部 _input_original 系列；单图/放大仅 1 张
+function sourcesOf(run: OutputRun): string[] {
+  return run.sources?.length ? run.sources : run.source ? [run.source] : []
 }
 
 function goto(action: 'upscale' | 'edit', run: OutputRun, image: string) {
@@ -282,9 +293,28 @@ function captionText(prompt: string): string {
           :class="{ selected: selectedKey === `${run.stamp}:${img}` }"
           @click="select(run, img)"
         >
-          <!-- 左：缩略图（编辑/放大历史含原图副本时双图并列：原图 | 结果） -->
-          <div class="hg-thumb" :class="{ dual: !!beforeUrl(run) }">
-            <template v-if="beforeUrl(run)">
+          <!-- 左：缩略图（编辑/放大历史含原图副本时双图并列：原图 | 结果；多图融合 → 素材网格 | 结果） -->
+          <div class="hg-thumb" :class="{ dual: sourcesOf(run).length > 0 }">
+            <template v-if="sourcesOf(run).length > 1">
+              <div class="hg-src-grid">
+                <img
+                  v-for="(s, si) in sourcesOf(run)"
+                  :key="si"
+                  :src="`${assetUrl(`${run.path}/${s}`)}?t=${run.stamp}`"
+                  :alt="`素材 ${si + 1}`"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="hg-thumb-sep"></span>
+              <img
+                :src="`${assetUrl(`${run.path}/${img}`)}?t=${run.stamp}`"
+                :alt="img"
+                loading="lazy"
+                decoding="async"
+              />
+            </template>
+            <template v-else-if="beforeUrl(run)">
               <img :src="beforeUrl(run)" :alt="`原图 ${img}`" loading="lazy" decoding="async" />
               <span class="hg-thumb-sep"></span>
               <img
@@ -422,6 +452,17 @@ function captionText(prompt: string): string {
   width: 2px;
   flex-shrink: 0;
   background: var(--border-strong);
+}
+/* 多图融合素材网格（左半） */
+.hg-src-grid {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 1px;
+  padding: 1px;
+  box-sizing: border-box;
 }
 .hg-thumb img {
   width: 100%;
