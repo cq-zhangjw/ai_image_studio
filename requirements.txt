@@ -1,0 +1,24 @@
+# Qwen-Image-2.1 项目依赖（Python 3.12）
+#
+# 注意：Windows 下 PyPI 默认 torch 为 CPU 版，必须从 PyTorch 官方源安装 CUDA 版：
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   （RTX 3080 为 Ampere 架构，CUDA 12.8 对应 cu128）
+
+# ---- 基础 ----
+torch>=2.11.0
+torchvision>=0.26.0
+transformers>=5.17
+diffusers>=0.41
+accelerate>=1.15
+pillow>=13.0
+huggingface_hub>=1.33
+
+# ---- 图像处理基础（Real-ESRGAN 等工具共用）----
+einops>=0.8
+opencv-python>=4.10
+
+# ---- 模型下载工具 ----
+modelscope>=1.22
+
+# ---- 开发/测试 ----
+pytest>=9.0

@@ -1,0 +1,45 @@
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Node / frontend ----
+frontend/node_modules/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# ---- Model weights & generated data (huge, never commit) ----
+models/
+outputs/
+db/
+
+# ---- Third-party vendored binaries (re-download as needed; see README) ----
+vendor/
+
+# ---- Logs & temp ----
+*.log
+tmp_*
+*.tmp
+*.bak
+*.old
+*.orig
+
+# ---- Environment & secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
