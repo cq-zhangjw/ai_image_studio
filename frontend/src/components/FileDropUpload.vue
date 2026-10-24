@@ -10,6 +10,7 @@ const props = defineProps<{
 const emit = defineEmits<{ file: [file: File] }>()
 
 const preview = ref<string>('')
+const broken = ref(false)
 const dragging = ref(false)
 const inputRef = ref<HTMLInputElement | null>(null)
 
@@ -17,10 +18,17 @@ const inputRef = ref<HTMLInputElement | null>(null)
 watch(
   () => props.previewUrl,
   (v) => {
+    broken.value = false
     if (v) preview.value = v
   },
   { immediate: true },
 )
+
+// 引用图已被删除（404）时给出友好占位，避免破图
+function onPreviewError() {
+  broken.value = true
+  preview.value = ''
+}
 
 function handleFile(file: File | undefined | null) {
   if (!file) return
@@ -28,6 +36,7 @@ function handleFile(file: File | undefined | null) {
     alert('请上传图片文件')
     return
   }
+  broken.value = false
   preview.value = URL.createObjectURL(file)
   emit('file', file)
 }
@@ -54,7 +63,8 @@ function onPick(e: Event) {
     @click="inputRef?.click()"
   >
     <input ref="inputRef" type="file" :accept="accept ?? 'image/*'" style="display: none" @change="onPick" />
-    <img v-if="preview" :src="preview" alt="preview" class="preview" />
+    <img v-if="preview" :src="preview" alt="preview" class="preview" @error="onPreviewError" />
+    <div v-else-if="broken" class="broken">图片不可用（可能已被删除）</div>
     <template v-else>
       <div class="icon">🖼</div>
       <div class="hint">点击或拖拽上传图片</div>
@@ -93,5 +103,11 @@ function onPick(e: Event) {
   max-width: 100%;
   max-height: 200px;
   object-fit: contain;
+}
+.broken {
+  font-size: 12px;
+  color: var(--warn, #d97706);
+  padding: 8px;
+  text-align: center;
 }
 </style>

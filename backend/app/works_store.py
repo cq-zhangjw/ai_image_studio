@@ -239,6 +239,15 @@ class WorksStore:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest)
                 copied.append(img)
+        # 原图快照（_ 前缀输入副本）一并复制进 db/images：
+        # 仅依赖 outputs/ 会在其被清理/删除时导致编辑/放大历史的 source 集体失效
+        out_dir = OUTPUT_DIR / stamp
+        if out_dir.is_dir():
+            for snap in out_dir.glob("_input_original*.png"):
+                dest = self.image_file(stamp, snap.name)
+                if not dest.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(snap, dest)
         if copied:
             self.add(stamp, type_, model, prompt, params, copied, created_at, pinned=pinned)
 
