@@ -553,19 +553,20 @@ function captionText(prompt: string): string {
 }
 .hg-ops {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   margin-top: auto;
   padding-top: 2px;
+  flex-wrap: wrap;
 }
 .hg-op {
-  height: 24px;
-  min-width: 24px;
-  padding: 0 7px;
-  border-radius: 7px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 5px;
+  border-radius: 6px;
   border: 1px solid var(--border-strong);
   background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
 import { downloadImage } from '@/utils/download'
@@ -19,7 +19,15 @@ const srcMode = ref(false)
 const srcStamp = ref('')
 const srcImage = ref('')
 
+const mode = ref<'single'>('single')
+const imageFile = ref<File | null>(null)
+const busy = ref(false)
+const error = ref('')
+const originalUrl = ref('')
+
 // 同路由 query 变化（放大历史内点 🔍）不会重新挂载，用 watch immediate 兜底
+// 注意：必须放在 originalUrl 声明之后（TDZ 会导致赋值中断）
+const sliderRef = ref<InstanceType<typeof BeforeAfterSlider> | null>(null)
 watch(
   () => route.query,
   () => {
@@ -30,18 +38,24 @@ watch(
       srcStamp.value = s
       srcImage.value = img
       originalUrl.value = assetUrl(`/api/outputs/${s}/${img}`)
+      // 带入原图：预览结果区显示原图，滑块拉到最右侧
+      nextTick(() => sliderRef.value?.setPos(100))
     }
   },
   { immediate: true },
 )
 
-const mode = ref<'single'>('single')
-const imageFile = ref<File | null>(null)
-const busy = ref(false)
-const error = ref('')
-const originalUrl = ref('')
-
 const latestTask = ref<any>(null)
+
+// 放大完成：滑块回到正中间
+watch(
+  () => store.lastResult,
+  (r) => {
+    if (r?.outputs?.length && store.lastResult?.taskId === latestTask.value?.id) {
+      nextTick(() => sliderRef.value?.setPos(50))
+    }
+  },
+)
 
 // 放大历史选中预览：有原图副本(source) → 滑块对比；否则单图
 const historyPreview = ref<{ url: string; stamp: string; image: string; source: string } | null>(null)
@@ -49,6 +63,8 @@ const historyPreview = ref<{ url: string; stamp: string; image: string; source: 
 function onHistorySelect(p: { url: string; stamp: string; image: string; prompt: string; pinned: boolean; source?: string }) {
   historyPreview.value = { url: p.url, stamp: p.stamp, image: p.image, source: p.source || '' }
   historySize.value = ''
+  // 历史回显对比：滑块回正中间
+  nextTick(() => sliderRef.value?.setPos(50))
 }
 
 // 历史单图真实像素尺寸（左上角角标）
@@ -81,6 +97,9 @@ function onImage(f: File) {
   srcStamp.value = ''
   srcImage.value = ''
   originalUrl.value = URL.createObjectURL(f)
+  historyPreview.value = null
+  // 上传原图：预览结果区显示原图，滑块拉到最右侧
+  nextTick(() => sliderRef.value?.setPos(100))
 }
 
 async function submit() {
@@ -165,16 +184,10 @@ async function submit() {
               {{ latestTask.status === 'queued' ? '排队中，请稍候…' : '放大中，完成后自动回传展示…' }}
             </div>
           </template>
-          <template v-else-if="!historyPreview && !srcMode && originalUrl && store.lastResult && store.lastResult.outputs.length">
-            <BeforeAfterSlider
-              :before="originalUrl"
-              :after="store.lastResult.outputs[0]"
-              :labels="{ left: '原图', right: '放大' }"
-            />
-          </template>
           <template v-else-if="historyPreview">
             <BeforeAfterSlider
               v-if="historyPreview.source"
+              ref="sliderRef"
               :before="assetUrl(`/api/outputs/${historyPreview.stamp}/${historyPreview.source}`)"
               :after="historyPreview.url"
               :labels="{ left: '原图', right: '放大' }"
@@ -203,12 +216,33 @@ async function submit() {
               </div>
             </template>
           </template>
+          <template
+            v-else-if="
+              originalUrl && store.lastResult?.outputs?.length && store.lastResult?.taskId === latestTask.value?.id
+            "
+          >
+            <BeforeAfterSlider
+              ref="sliderRef"
+              :before="originalUrl"
+              :after="store.lastResult.outputs[0]"
+              :labels="{ left: '原图', right: '放大' }"
+            />
+          </template>
+          <template v-else-if="originalUrl">
+            <!-- 已设置原图（上传/带入），尚未生成结果：显示原图，滑块在最右 -->
+            <BeforeAfterSlider ref="sliderRef" :before="originalUrl" :labels="{ left: '原图' }" />
+          </template>
           <div v-else class="preview-placeholder">确认素材与参数后，点击「开始放大」，对比结果将展示在这里</div>
         </div>
 
         <!-- 右（1fr）：放大历史 -->
         <div class="history-area">
-          <HistoryGallery type="upscale" title="放大历史" @select="onHistorySelect" />
+          <HistoryGallery
+            type="upscale"
+            title="放大历史"
+            @select="onHistorySelect"
+            @goto="(p: any) => $router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })"
+          />
         </div>
       </div>
     </section>
@@ -232,7 +266,7 @@ async function submit() {
 }
 .result-split {
   display: grid;
-  grid-template-columns: 3fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
   gap: 14px;
   /* 占满 ws-main 剩余高度（顶部导航+子tab+padding） */
   height: calc(100vh - 210px);

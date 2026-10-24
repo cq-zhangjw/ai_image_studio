@@ -926,7 +926,7 @@ textarea {
 }
 .result-split {
   display: grid;
-  grid-template-columns: 3fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
   gap: 14px;
   /* 占满 ws-main 剩余高度（顶部导航+子tab+padding） */
   height: calc(100vh - 210px);

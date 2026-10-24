@@ -5,13 +5,19 @@ import { downloadImage } from '@/utils/download'
 
 const props = defineProps<{
   before: string
-  after: string
+  after?: string
   labels?: { left?: string; right?: string }
 }>()
 
 const container = ref<HTMLElement | null>(null)
 const pos = ref(50)
 let dragging = false
+
+// 外部控制滑块位置（带入原图→最右；任务完成→回中间）
+function setPos(p: number) {
+  pos.value = Math.min(100, Math.max(0, p))
+}
+defineExpose({ setPos })
 
 // 实际像素尺寸（加载后显示在角落标签）
 const beforeSize = ref('')
@@ -26,6 +32,7 @@ function onAfterLoad(e: Event) {
 }
 
 async function onDownload() {
+  if (!props.after) return
   await downloadImage(assetUrl(props.after), `upscale_${Date.now()}.png`)
 }
 
@@ -36,12 +43,13 @@ function setFromClientX(x: number) {
   pos.value = Math.min(100, Math.max(0, ((x - rect.left) / rect.width) * 100))
 }
 function onDown(e: PointerEvent) {
+  if (!props.after) return // 仅展示原图态：不允许拖动裁剪
   dragging = true
   setFromClientX(e.clientX)
   ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
 }
 function onMove(e: PointerEvent) {
-  if (dragging) setFromClientX(e.clientX)
+  if (dragging && props.after) setFromClientX(e.clientX)
 }
 function onUp() {
   dragging = false
@@ -57,16 +65,16 @@ function onUp() {
     @pointerup="onUp"
     @pointercancel="onUp"
   >
-    <img class="ba-img ba-after" :src="assetUrl(after)" alt="after" draggable="false" @load="onAfterLoad" />
+    <img v-if="after" class="ba-img ba-after" :src="assetUrl(after)" alt="after" draggable="false" @load="onAfterLoad" />
     <div class="ba-before-wrap" :style="{ clipPath: `inset(0 ${100 - pos}% 0 0)` }">
       <img class="ba-img ba-before" :src="assetUrl(before)" alt="before" draggable="false" @load="onBeforeLoad" />
     </div>
-    <div class="ba-divider" :style="{ left: pos + '%' }">
+    <div v-if="after" class="ba-divider" :style="{ left: pos + '%' }">
       <span class="ba-handle">⟨⟩</span>
     </div>
     <span class="ba-label ba-left">{{ labels?.left ?? '原图' }}{{ beforeSize ? ` ${beforeSize}` : '' }}</span>
-    <span class="ba-label ba-right">{{ labels?.right ?? '放大' }}{{ afterSize ? ` ${afterSize}` : '' }}</span>
-    <button class="ba-download" title="下载放大图" @pointerdown.stop @click.stop="onDownload">⬇</button>
+    <span v-if="after" class="ba-label ba-right">{{ labels?.right ?? '放大' }}{{ afterSize ? ` ${afterSize}` : '' }}</span>
+    <button v-if="after" class="ba-download" title="下载放大图" @pointerdown.stop @click.stop="onDownload">⬇</button>
   </div>
 </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
 import { useTaskStore } from '@/stores/task'
@@ -23,22 +23,6 @@ const mode = ref<'single' | 'fusion'>('single')
 const srcMode = ref(false)
 const srcStamp = ref('')
 const srcImage = ref('')
-
-// 同路由 query 变化（编辑历史内点 ✂）不会重新挂载，用 watch immediate 兜底
-watch(
-  () => route.query,
-  () => {
-    const s = String(route.query.src ?? '')
-    const img = String(route.query.img ?? '')
-    if (s && img) {
-      srcMode.value = true
-      srcStamp.value = s
-      srcImage.value = img
-      originalUrl.value = assetUrl(`/api/outputs/${s}/${img}`)
-    }
-  },
-  { immediate: true },
-)
 
 const prompt = ref('')
 const imageFile = ref<File | null>(null)
@@ -72,6 +56,10 @@ function onImage(f: File) {
   srcStamp.value = ''
   srcImage.value = ''
   originalUrl.value = URL.createObjectURL(f)
+  resultUrl.value = ''
+  histBefore.value = ''
+  // 上传原图：预览结果区显示原图，滑块拉到最右侧
+  nextTick(() => sliderRef.value?.setPos(100))
 }
 
 function onFusionFile(i: number, f: File) {
@@ -100,12 +88,43 @@ watch(
   (r) => {
     if (r?.outputs?.length && store.lastResult?.taskId === latestTask.value?.id) {
       resultUrl.value = assetUrl(r.outputs[0])
+      // 生图结束：滑块回到正中间
+      nextTick(() => sliderRef.value?.setPos(50))
     }
   },
 )
 
 // 对比区左栏 URL：单图=原图，融合=首张素材；历史回显优先用历史原图
 const histBefore = ref('')
+
+// 同路由 query 变化（编辑历史内点 ✂）不会重新挂载，用 watch immediate 兜底
+// 由外部跳转带入（文生图历史 → 去编辑）：设置引用模式并跳过"自动选中最新历史"，
+// 避免历史加载后 onSelect 把带入的图覆盖掉
+// 注意：必须放在 originalUrl/resultUrl/histBefore 声明之后（TDZ 会导致赋值中断）
+const jumpedFromQuery = ref(false)
+watch(
+  () => route.query,
+  () => {
+    const s = String(route.query.src ?? '')
+    const img = String(route.query.img ?? '')
+    if (s && img) {
+      jumpedFromQuery.value = true
+      srcMode.value = true
+      srcStamp.value = s
+      srcImage.value = img
+      originalUrl.value = assetUrl(`/api/outputs/${s}/${img}`)
+      // 清空残留结果，避免误显示上一次任务的对比图
+      resultUrl.value = ''
+      histBefore.value = ''
+      // 带入原图：预览结果区显示原图，滑块拉到最右侧
+      nextTick(() => sliderRef.value?.setPos(100))
+    } else {
+      jumpedFromQuery.value = false
+    }
+  },
+  { immediate: true },
+)
+
 const compareLeft = computed(() => {
   if (histBefore.value) return histBefore.value
   if (mode.value === 'fusion') {
@@ -117,11 +136,45 @@ const compareLeft = computed(() => {
 
 // ---- 历史导航：‹ › + 键盘 ←/→，默认显示第一组（最新） ----
 const galleryRef = ref<InstanceType<typeof HistoryGallery> | null>(null)
+const sliderRef = ref<InstanceType<typeof BeforeAfterSlider> | null>(null)
 const histRuns = ref<OutputRun[]>([])
 const curHistIndex = ref(-1)
 
+// 批次号 → YYYY/MM/DD hh:mm:ss（stamp 即本地生成时刻，直接格式化避免时区偏差）
+function fmtStampDate(stamp: string | undefined): string {
+  if (!stamp) return ''
+  const m = stamp.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/)
+  if (!m) return stamp
+  return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}`
+}
+
+// 当前预览条目的信息（历史选中优先，否则最新任务）
+const currentRun = computed<OutputRun | null>(() => {
+  if (curHistIndex.value >= 0 && curHistIndex.value < histRuns.value.length) {
+    return histRuns.value[curHistIndex.value]
+  }
+  return null
+})
+const currentModel = computed(() => {
+  const r = currentRun.value
+  if (r?.params?.model) return String(r.params.model).replace(/^.*[\\/]/, '').slice(0, 26)
+  const t = latestTask.value as any
+  return t?.model ? String(t.model).replace(/^.*[\\/]/, '').slice(0, 26) : ''
+})
+const currentStamp = computed(() => {
+  const r = currentRun.value
+  return fmtStampDate(r?.stamp) || (latestTask.value as any)?.stamp || ''
+})
+const currentPrompt = computed(() => {
+  const r = currentRun.value
+  if (r?.prompt) return r.prompt
+  return prompt.value
+})
+
 function onHistoryLoaded(runs: OutputRun[]) {
   histRuns.value = runs.filter((r) => !r.stamp.startsWith('task:'))
+  // 外部跳转带入的图优先展示，不自动选中最新历史（避免覆盖带入图）
+  if (jumpedFromQuery.value) return
   if (histRuns.value.length && (curHistIndex.value < 0 || curHistIndex.value >= histRuns.value.length)) {
     curHistIndex.value = 0
     const r = histRuns.value[0]
@@ -140,6 +193,15 @@ function navHistory(dir: 1 | -1) {
 function onSelect(p: { url: string; stamp: string; image: string; prompt: string; source?: string; params?: Record<string, unknown> | null }) {
   resultUrl.value = p.url
   histBefore.value = p.source ? assetUrl(`/api/outputs/${p.stamp}/${p.source}`) : ''
+  // 同步当前条目索引（供预览信息行显示该条目的时间/模型/指令）
+  const idx = histRuns.value.findIndex((r) => r.stamp === p.stamp)
+  if (idx >= 0) curHistIndex.value = idx
+  // 历史选中即进入服务端引用模式：提交时用 src_stamp/src_image 作为原图源
+  if (p.stamp && p.image) {
+    srcMode.value = true
+    srcStamp.value = p.stamp
+    srcImage.value = p.image
+  }
   const pr = (p.params ?? {}) as Record<string, unknown>
   const t = typeof pr.prompt === 'string' && pr.prompt ? pr.prompt : p.prompt
   if (t) prompt.value = t
@@ -156,7 +218,11 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowLeft') navHistory(-1)
   else if (e.key === 'ArrowRight') navHistory(1)
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  // 组件挂载兜底：query 带入的原图，滑块拉到最右侧（immediate watch 可能早于挂载）
+  if (jumpedFromQuery.value) nextTick(() => sliderRef.value?.setPos(100))
+})
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 async function submit() {
@@ -292,48 +358,76 @@ async function submit() {
       <div class="result-split">
         <!-- 左：编辑前/后对比 -->
         <div class="preview-area">
-          <div class="pa-nav">
-            <button type="button" class="pa-nav-btn" title="上一组（←）" @click="navHistory(-1)">‹</button>
-            <span class="pa-nav-count">{{ histRuns.length ? `${curHistIndex + 1}/${histRuns.length}` : '0/0' }}</span>
-            <button type="button" class="pa-nav-btn" title="下一组（→）" @click="navHistory(1)">›</button>
+          <div class="compare-wrap">
+            <template v-if="mode === 'fusion'">
+              <div class="fusion-compare">
+                <div class="fc-side fc-materials">
+                  <div class="fc-label">素材（{{ fusionUploaded.length || (histBefore ? 1 : 0) }} 张）</div>
+                  <div v-if="fusionUploaded.length" class="fc-grid">
+                    <img
+                      v-for="(f, idx) in fusionUploaded"
+                      :key="idx"
+                      :src="fusionUrlOf(f)"
+                      class="fc-thumb"
+                      alt="素材"
+                    />
+                  </div>
+                  <div v-else-if="histBefore" class="fc-grid">
+                    <img :src="histBefore" class="fc-thumb" alt="素材" />
+                  </div>
+                  <div v-else class="preview-placeholder">上传图片后显示素材</div>
+                </div>
+                <div class="fc-side">
+                  <div class="fc-label">融合结果</div>
+                  <img v-if="resultUrl" :src="resultUrl" class="fc-result" alt="融合结果" />
+                  <div v-else class="preview-placeholder">等待融合结果</div>
+                </div>
+              </div>
+            </template>
+            <template v-else-if="resultUrl">
+              <BeforeAfterSlider
+                v-if="compareLeft"
+                ref="sliderRef"
+                :before="compareLeft"
+                :after="resultUrl"
+                :labels="{ left: '原图', right: '结果' }"
+              />
+              <div v-else class="single-result">
+                <img :src="resultUrl" class="edit-result" alt="编辑结果" />
+              </div>
+            </template>
+            <template v-else-if="compareLeft">
+              <!-- 已设置原图（上传/带入），尚未生成结果：显示原图，滑块在最右 -->
+              <BeforeAfterSlider ref="sliderRef" :before="compareLeft" :labels="{ left: '原图' }" />
+            </template>
+            <template v-else-if="latestTask && (latestTask.status === 'running' || latestTask.status === 'queued')">
+              <div class="preview-placeholder">
+                {{ latestTask.status === 'queued' ? '排队中，请稍候…' : '处理中，完成后自动回传展示…' }}
+              </div>
+            </template>
+            <div v-else class="preview-placeholder">上传原图，描述修改内容，结果将展示在这里</div>
+
+            <button
+              v-if="histRuns.length"
+              type="button"
+              class="nav-btn nav-prev"
+              title="上一组（←）"
+              @click="navHistory(-1)"
+            >‹</button>
+            <button
+              v-if="histRuns.length"
+              type="button"
+              class="nav-btn nav-next"
+              title="下一组（→）"
+              @click="navHistory(1)"
+            >›</button>
           </div>
-          <template v-if="mode === 'fusion'">
-            <div class="fusion-compare">
-              <div class="fc-side fc-materials">
-                <div class="fc-label">素材（{{ fusionUploaded.length || (histBefore ? 1 : 0) }} 张）</div>
-                <div v-if="fusionUploaded.length" class="fc-grid">
-                  <img
-                    v-for="(f, idx) in fusionUploaded"
-                    :key="idx"
-                    :src="fusionUrlOf(f)"
-                    class="fc-thumb"
-                    alt="素材"
-                  />
-                </div>
-                <div v-else-if="histBefore" class="fc-grid">
-                  <img :src="histBefore" class="fc-thumb" alt="素材" />
-                </div>
-                <div v-else class="preview-placeholder">上传图片后显示素材</div>
-              </div>
-              <div class="fc-side">
-                <div class="fc-label">融合结果</div>
-                <img v-if="resultUrl" :src="resultUrl" class="fc-result" alt="融合结果" />
-                <div v-else class="preview-placeholder">等待融合结果</div>
-              </div>
-            </div>
-          </template>
-          <template v-else-if="resultUrl">
-            <BeforeAfterSlider v-if="compareLeft" :before="compareLeft" :after="resultUrl" :labels="{ left: '原图', right: '结果' }" />
-            <div v-else class="single-result">
-              <img :src="resultUrl" class="edit-result" alt="编辑结果" />
-            </div>
-          </template>
-          <template v-else-if="latestTask && (latestTask.status === 'running' || latestTask.status === 'queued')">
-            <div class="preview-placeholder">
-              {{ latestTask.status === 'queued' ? '排队中，请稍候…' : '处理中，完成后自动回传展示…' }}
-            </div>
-          </template>
-          <div v-else class="preview-placeholder">上传原图，描述修改内容，结果将展示在这里</div>
+          <div v-if="histRuns.length || currentModel || currentStamp" class="preview-meta">
+            <span v-if="histRuns.length" class="preview-count mono">{{ curHistIndex + 1 }}/{{ histRuns.length }}</span>
+            <span class="mono preview-stamp">{{ currentStamp }}</span>
+            <span v-if="currentModel" class="preview-meta-parts">{{ currentModel }}</span>
+          </div>
+          <p v-if="currentPrompt" class="preview-prompt" :title="currentPrompt">{{ currentPrompt }}</p>
         </div>
 
         <!-- 右：编辑历史 -->
@@ -343,7 +437,7 @@ async function submit() {
             type="edit"
             @loaded="onHistoryLoaded"
             @select="onSelect"
-            @goto="(p: any) => $router.push({ path: `/workspace/edit`, query: { src: p.stamp, img: p.image } })"
+            @goto="(p: any) => $router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })"
           />
         </div>
       </div>
@@ -501,7 +595,7 @@ textarea {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
   gap: 14px;
   height: calc(100vh - 210px);
   min-height: 420px;
@@ -510,8 +604,6 @@ textarea {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--bg-elev);
@@ -519,37 +611,79 @@ textarea {
   overflow: hidden;
   position: relative;
 }
-.pa-nav {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 5;
+.compare-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(0, 0, 0, 0.45);
-  border-radius: 999px;
-  padding: 2px 6px;
+  width: 100%;
 }
-.pa-nav-btn {
-  width: 22px;
-  height: 22px;
-  border: none;
+.nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  background: rgba(15, 20, 25, 0.55);
   color: #fff;
-  font-size: 14px;
+  font-size: 22px;
   line-height: 1;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.1s;
+  padding-bottom: 3px;
 }
-.pa-nav-btn:hover {
+.nav-btn:hover {
   background: var(--primary);
+  transform: translateY(-50%) scale(1.08);
 }
-.pa-nav-count {
+.nav-prev {
+  left: 10px;
+}
+.nav-next {
+  right: 10px;
+}
+.preview-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.9);
-  min-width: 40px;
-  text-align: center;
+  color: var(--text-dim);
+  padding-top: 8px;
+  flex-shrink: 0;
+  justify-content: flex-start;
+}
+.preview-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 11px;
+}
+.preview-stamp {
+  font-size: 11px;
+}
+.preview-meta-parts {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-prompt {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .fusion-compare {
   width: 100%;
@@ -594,6 +728,20 @@ textarea {
   object-fit: contain;
   border-radius: 8px;
 }
+.single-result {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.edit-result {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
 .history-area {
   min-height: 0;
   overflow-y: auto;
@@ -603,6 +751,11 @@ textarea {
   padding: 4px 6px;
 }
 .preview-placeholder {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-faint);
   font-size: 13px;
   text-align: center;
