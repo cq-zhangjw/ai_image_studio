@@ -47,9 +47,9 @@ const EDIT_MODELS = [
   { value: 'flux2-klein-9b', name: 'FLUX.2 [klein] 9B' },
 ]
 
-// FLUX.2 klein 走统一编辑（步数建议 4）
+// FLUX.2 klein 走统一编辑（步数建议 20）
 watch(model, (m) => {
-  if (m === 'flux2-klein-9b') steps.value = 4
+  if (m === 'flux2-klein-9b') steps.value = 20
   else steps.value = 24
 })
 
@@ -253,10 +253,28 @@ function navHistory(dir: 1 | -1) {
   const n = modeRuns.value.length
   if (!n) return
   viewingHistory.value = true
-  curHistIndex.value = ((curHistIndex.value < 0 ? 0 : curHistIndex.value) + dir + n) % n
-  const r = modeRuns.value[curHistIndex.value]
-  curStamp.value = r.stamp
-  galleryRef.value?.selectRun(r.stamp, r.images[0])
+  const start = (curHistIndex.value < 0 ? 0 : curHistIndex.value) + dir
+  // 跳过已被删空的组（删除图片后 images 可能为 0）
+  for (let k = 0; k < n; k++) {
+    const i = (((start + k * dir) % n) + n) % n
+    const r = modeRuns.value[i]
+    if (r.images.length > 0) {
+      curHistIndex.value = i
+      curStamp.value = r.stamp
+      galleryRef.value?.selectRun(r.stamp, r.images[0])
+      return
+    }
+  }
+}
+
+// 删除历史图片：若删除的是当前预览组，组内还有图则重选第一张，组空则自动跳下一组
+function onHistoryDeleted(e: { stamp: string; image: string; remaining: number }) {
+  if (curStamp.value !== e.stamp) return
+  if (e.remaining > 0) {
+    galleryRef.value?.selectRun(e.stamp)
+  } else {
+    navHistory(1)
+  }
 }
 
 function onSelect(p: { url: string; stamp: string; image: string; prompt: string; source?: string; sources?: string[]; params?: Record<string, unknown> | null }) {
@@ -563,6 +581,7 @@ async function submit() {
             @loaded="onHistoryLoaded"
             @select="onSelect"
             @goto="(p: any) => $router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })"
+            @deleted="onHistoryDeleted"
           />
         </div>
       </div>

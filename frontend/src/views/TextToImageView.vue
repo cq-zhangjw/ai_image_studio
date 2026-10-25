@@ -78,7 +78,7 @@ const MODEL_STEP_DEFAULT: Record<string, number> = {
   'qwen-image-2.1': 20,
   'ernie-image': 20,
   'moss-image-sft': 30,
-  'flux2-klein-9b': 4,
+  'flux2-klein-9b': 20,
   'z-image-turbo': 8,
   'sana-sprint-1.6b': 2,
   'lumina-image-2.0': 40,
@@ -405,7 +405,19 @@ async function onHistorySelect(p: { url: string; stamp: string; image: string; p
 
 // 历史图片 → 去放大 / 去编辑（跳转并自动带入该图）
 function onHistoryGoto(p: { stamp: string; image: string; action: 'upscale' | 'edit' }) {
-  router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })
+  router.push({ path: `/workspace/${p.action}`, query: { src: p.stamp, img: p.image } })}
+
+// 删除历史图片：若删除的是当前预览组，组内还有图则重选第一张，组空则自动跳下一组
+function onHistoryDeleted(e: { stamp: string; image: string; remaining: number }) {
+  const cur = preview.value
+  if (!cur) return
+  const curStamp = cur.stamps?.[cur.index]
+  if (curStamp !== e.stamp) return
+  if (e.remaining > 0) {
+    historyRef.value?.selectRun(e.stamp)
+  } else {
+    navHistory(1)
+  }
 }
 
 async function generate() {
@@ -658,6 +670,7 @@ async function generate() {
             @select="onHistorySelect"
             @goto="onHistoryGoto"
             @loaded="onHistoryLoaded"
+            @deleted="onHistoryDeleted"
           />
         </div>
       </div>

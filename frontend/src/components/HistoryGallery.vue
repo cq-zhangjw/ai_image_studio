@@ -9,6 +9,7 @@ const emit = defineEmits<{
   (e: 'select', payload: { url: string; stamp: string; image: string; prompt: string; pinned: boolean; source?: string; sources?: string[]; category?: string; params?: Record<string, unknown> | null }): void
   (e: 'goto', payload: { stamp: string; image: string; action: 'upscale' | 'edit' }): void
   (e: 'loaded', runs: OutputRun[]): void
+  (e: 'deleted', payload: { stamp: string; image: string; remaining: number }): void
 }>()
 
 const props = withDefaults(
@@ -142,6 +143,8 @@ async function remove(run: OutputRun, image: string) {
       run.images.splice(idx, 1)
       if (run.pinned) run.pinned.splice(idx, 1)
     }
+    // 通知视图：当前组剩余图片数（0 = 组已空，可跳下一组）
+    emit('deleted', { stamp: run.stamp, image, remaining: run.images.length })
   } finally {
     busyKey.value = ''
     confirmDel.value[key] = false
