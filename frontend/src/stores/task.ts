@@ -93,7 +93,13 @@ export const useTaskStore = defineStore('task', {
           const t = this.tasks[taskId]
           if (!t) return
           t.status = (d.status as TaskDetail['status']) || t.status
-          t.progress = { step: d.step, total: d.total, percent: d.percent, phase: d.phase }
+          t.progress = {
+            step: d.step,
+            total: d.total,
+            percent: d.percent,
+            phase: d.phase,
+            preview_url: d.preview_url ?? null,
+          }
           t.message = d.phase
         },
         onStatus: (d) => {

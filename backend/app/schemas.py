@@ -1,4 +1,4 @@
-﻿"""Pydantic 请求/响应模型。"""
+"""Pydantic 请求/响应模型。"""
 
 from typing import List, Optional
 
@@ -24,6 +24,7 @@ class TaskProgress(BaseModel):
     total: int = 1
     percent: int = 0
     phase: str = "queued"
+    preview_url: Optional[str] = None  # GGUF 引擎中途采样预览图（可选，短任务无）
 
 
 class TaskDetail(BaseModel):

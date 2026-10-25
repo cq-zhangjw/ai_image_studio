@@ -29,12 +29,17 @@ def get_util() -> Flux2KleinUtil:
 
 
 def _cb(task, cb: Optional[Callable[[int, int], None]] = None):
-    def wrapper(step: int, total: int):
-        task.set_progress(step, total, "sampling")
+    def wrapper(step: int, total: int, preview: Optional[str] = None):
+        task.set_progress(step, total, "sampling", preview_url=preview)
         if cb is not None:
             cb(step, total)
 
     return wrapper
+
+
+def _preview_interval(steps: int) -> int:
+    """GGUF 采样中途预览自适应：>=12 步才启用（interval=max(2, steps//5)），短任务仅进度行。"""
+    return max(2, int(steps) // 5) if int(steps) >= 12 else 0
 
 
 def is_loaded() -> bool:
@@ -67,6 +72,7 @@ def text_to_image(task) -> List[Path]:
         num_inference_steps=p["num_inference_steps"],
         seed=p.get("seed"),
         progress_callback=_cb(task),
+        preview_interval=_preview_interval(p["num_inference_steps"]),
     )
     _apply_stats(task, result)
     return result["images"]
@@ -90,6 +96,7 @@ def edit_image(task, image_path: Optional[Path]) -> List[Path]:
         num_inference_steps=p["num_inference_steps"],
         seed=p.get("seed"),
         progress_callback=_cb(task),
+        preview_interval=_preview_interval(p["num_inference_steps"]),
     )
     _apply_stats(task, result)
     _copy_inputs_as_source(result, image_path, paths)

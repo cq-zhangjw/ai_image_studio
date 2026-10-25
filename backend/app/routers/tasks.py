@@ -276,9 +276,27 @@ async def task_events(task_id: str):
                 last_version = t.version
                 d = t.to_detail().model_dump()
                 if t.status in ("queued", "running"):
+                    import json as _json
+
+                    progress = t.progress
+                    preview_url = ""
+                    if progress.preview_url:
+                        converted = _to_web_paths([progress.preview_url])
+                        if converted:
+                            preview_url = converted[0]
                     yield {
                         "event": "progress",
-                        "data": f'{{"step": {t.progress.step}, "total": {t.progress.total}, "percent": {t.progress.percent}, "phase": "{t.progress.phase}", "status": "{t.status}"}}',
+                        "data": _json.dumps(
+                            {
+                                "step": progress.step,
+                                "total": progress.total,
+                                "percent": progress.percent,
+                                "phase": progress.phase,
+                                "status": t.status,
+                                "preview_url": preview_url or None,
+                            },
+                            ensure_ascii=False,
+                        ),
                     }
                 elif t.status in ("succeeded", "failed", "cancelled"):
                     import json

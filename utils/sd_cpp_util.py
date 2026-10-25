@@ -28,9 +28,9 @@
     out = util.edit_image("merge both images", images=["a.png", "b.png"])
 
 进度说明：
-    sd-cli 不输出逐 denoise step 的文本日志，因此 progress_callback 的
-    语义为「完成时回调 (total, total)」；如需真实中途进度，可启用
-    preview 模式（见 generate 的 preview_interval 参数）。
+    采样进度行（`| 3/20 - 2.01s/it`）逐行解析 → progress_callback 按
+    真实 step 回调；传 preview_interval=N 时额外启用 sd-cli `--preview vae`，
+    中途预览图落盘后回调带 preview_path（前端可显示生成过程）。
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Callable, List, Optional, Union
@@ -77,6 +78,9 @@ _MODEL_SEARCH_DIRS = [
 
 _RE_SAMPLING_MS = re.compile(r"sampling completed, taking\s+([\d.]+)s")
 _RE_GENERATE_MS = re.compile(r"generate_image completed in\s+([\d.]+)s")
+# 采样进度行（stdout 每步一行）：`  |====>    | 3/20 -   2.01s/it`
+# 用 `- X.XXs/it` 后缀与模型加载进度条（`72/397 - 1.32GB/s`）区分
+_RE_SAMPLING_STEP = re.compile(r"(\d+)/(\d+)\s+-\s+[\d.]+\s*s/it")
 
 
 class SdCppUtil:
@@ -208,10 +212,15 @@ class SdCppUtil:
     def _run_cli(
         self,
         cmd: List[str],
-        progress_callback: Optional[Callable[[int, int], None]],
+        progress_callback: Optional[Callable[[int, int, Optional[str]], None]],
         total_steps: int,
     ) -> str:
-        """启动子进程并捕获合并输出；可选 progress 回调。"""
+        """启动子进程并捕获合并输出；逐行解析真实采样进度回调。
+
+        回调签名 progress_callback(step, total, preview_path=None)：
+        - 采样进度行（`| 3/20 - 2.01s/it`）→ 每步回调真实 step；
+        - preview 路径由调用方（generate 的监控线程）另行回调。
+        """
         env = os.environ.copy()
         proc = subprocess.Popen(
             cmd,
@@ -226,6 +235,10 @@ class SdCppUtil:
         chunks: List[str] = []
         for line in proc.stdout:
             chunks.append(line)
+            if progress_callback is not None:
+                m = _RE_SAMPLING_STEP.search(line)
+                if m:
+                    progress_callback(int(m.group(1)), int(m.group(2)))
         proc.wait()
         text = "".join(chunks)
         if proc.returncode != 0:
@@ -283,7 +296,7 @@ class SdCppUtil:
         cfg_scale: Optional[float] = None,
         output_dir: Optional[Union[str, Path]] = None,
         prefix: str = "output",
-        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_callback: Optional[Callable[[int, int, Optional[str]], None]] = None,
         **extra,
     ) -> dict:
         """统一生成入口（签名对齐 utils/qwen_21_util.py 的 generate）。
@@ -293,9 +306,9 @@ class SdCppUtil:
         - width/height 为 None 时：默认 1024；编辑模式继承第一张输入图尺寸
         - cfg_scale 为 None 时使用构造时的 default_cfg_scale
 
-        progress_callback(step, total)：sd-cli 无逐 step 文本进度，默认
-        仅在完成时回调 (total, total)；如需中途预览进度，传
-        preview_interval=N（配合 --preview 启用，见文档）。
+        progress_callback(step, total, preview_path=None)：
+        采样过程中按真实步数回调；若传 preview_interval=N（配合 sd-cli
+        `--preview vae`），中途预览图落盘时会带 preview_path 回调。
 
         返回 {"run_dir": Path, "prompt_record": Path, "images": List[Path]}
         """
@@ -331,13 +344,16 @@ class SdCppUtil:
         run_dir = self._make_run_dir(output_dir)
         out_path = run_dir / f"{prefix}_01.png"
 
-        # 可选预览进度（preview_interval>0 时启用）
+        # 可选预览进度（preview_interval>0 时启用）：sd-cli 落盘中途预览图，
+        # 后台线程监控新文件并回调 progress_callback(step, total, preview_path)
         preview_interval = int(extra.pop("preview_interval", 0) or 0)
         cmd_extra = dict(extra)
+        preview_pattern = None
         if preview_interval > 0:
             cmd_extra["--preview"] = "vae"
             cmd_extra["--preview-interval"] = str(preview_interval)
-            cmd_extra["--preview-path"] = str(run_dir / f"{prefix}_preview_%03d.png")
+            preview_pattern = run_dir / f"{prefix}_preview_%03d.png"
+            cmd_extra["--preview-path"] = str(preview_pattern)
 
         cmd = self._build_command(
             prompt=prompt,
@@ -353,7 +369,41 @@ class SdCppUtil:
         )
 
         t_start = time.perf_counter()
-        log_text = self._run_cli(cmd, progress_callback, steps)
+
+        # 监控线程：轮询 preview 落盘（子进程运行期间），新文件 -> 回调带路径
+        stop_watch = threading.Event()
+        watcher: Optional[threading.Thread] = None
+
+        def _watch_previews() -> None:
+            if preview_pattern is None:
+                return
+            seen: set[str] = set()
+            while not stop_watch.is_set():
+                candidates = sorted(run_dir.glob(f"{prefix}_preview_*.png"))
+                for p in candidates:
+                    key = p.name
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    try:
+                        idx = int(key.rsplit("_", 1)[1].split(".")[0])
+                    except ValueError:  # noqa: PERF203
+                        continue
+                    if progress_callback is not None:
+                        est_step = min((idx + 1) * preview_interval, steps)
+                        progress_callback(est_step, steps, str(p))
+                time.sleep(0.4)
+
+        if preview_interval > 0 and progress_callback is not None:
+            watcher = threading.Thread(target=_watch_previews, name="preview-watch", daemon=True)
+            watcher.start()
+
+        try:
+            log_text = self._run_cli(cmd, progress_callback, steps)
+        finally:
+            stop_watch.set()
+            if watcher is not None:
+                watcher.join(timeout=1.0)
         elapsed = time.perf_counter() - t_start
         timing = self._parse_log(log_text)
 

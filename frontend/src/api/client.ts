@@ -91,7 +91,14 @@ export const api = {
 // ---- SSE ----
 
 export type SseHandlers = {
-  onProgress?: (d: { step: number; total: number; percent: number; phase: string; status: string }) => void
+  onProgress?: (d: {
+    step: number
+    total: number
+    percent: number
+    phase: string
+    status: string
+    preview_url?: string | null
+  }) => void
   onStatus?: (d: {
     status: string
     outputs: string[]

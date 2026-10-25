@@ -1,4 +1,4 @@
-"""Qwen-Image-2.1 推理服务封装：复用 utils.qwen_21_gguf_util，接入任务进度。
+﻿"""Qwen-Image-2.1 推理服务封装：复用 utils.qwen_21_gguf_util，接入任务进度。
 
 底层为 stable-diffusion.cpp GGUF 引擎（sd-cli 子进程），
 与 utils/qwen_21_gguf_util.py 接口兼容，服务层无需改动任务逻辑。
@@ -29,14 +29,23 @@ def get_util() -> QwenImage21Util:
 
 
 def _cb(task, cb: Optional[Callable[[int, int], None]] = None):
-    """包装 util 进度回调 -> 更新 TaskInfo。"""
+    """包装 util 进度回调 -> 更新 TaskInfo（支持 GGUF 中途预览图）。"""
 
-    def wrapper(step: int, total: int):
-        task.set_progress(step, total, "sampling")
+    def wrapper(step: int, total: int, preview: Optional[str] = None):
+        task.set_progress(step, total, "sampling", preview_url=preview)
         if cb is not None:
             cb(step, total)
 
     return wrapper
+
+
+def _preview_interval(steps: int) -> int:
+    """GGUF 采样中途预览自适应：步数足够长才启用（短任务 VAE 解码开销占比过大）。
+
+    sd-cli 每 N 步落一张 vae 预览图（约 1-2s/张）；长任务（>=12 步）启用，
+    interval = max(2, steps//5)；短任务不启用，仅靠进度行百分比。
+    """
+    return max(2, int(steps) // 5) if int(steps) >= 12 else 0
 
 
 def is_loaded() -> bool:
@@ -63,6 +72,7 @@ def text_to_image(task) -> List[Path]:
         num_inference_steps=p["num_inference_steps"],
         seed=p.get("seed"),
         progress_callback=_cb(task),
+        preview_interval=_preview_interval(p["num_inference_steps"]),
     )
     task.elapsed_seconds = _read_record(result["prompt_record"], "elapsed_seconds")
     task.steps_per_second = _read_record(result["prompt_record"], "steps_per_second")
@@ -79,6 +89,7 @@ def edit_image(task, image_path: Path, mark_path: Optional[Path], mask_path: Opt
         num_inference_steps=p["num_inference_steps"],
         seed=p.get("seed"),
         progress_callback=_cb(task),
+        preview_interval=_preview_interval(p["num_inference_steps"]),
     )
     image_paths: list = p.get("_image_paths") or []
     if len(image_paths) > 1:
@@ -104,6 +115,7 @@ def edit_image(task, image_path: Path, mark_path: Optional[Path], mask_path: Opt
             num_inference_steps=p["num_inference_steps"],
             seed=p.get("seed"),
             progress_callback=_cb(task),
+        preview_interval=_preview_interval(p["num_inference_steps"]),
         )
     task.elapsed_seconds = _read_record(result["prompt_record"], "elapsed_seconds")
     task.steps_per_second = _read_record(result["prompt_record"], "steps_per_second")
@@ -124,6 +136,7 @@ def outpaint(task, image_path: Path) -> List[Path]:
         num_inference_steps=p["num_inference_steps"],
         seed=p.get("seed"),
         progress_callback=_cb(task),
+        preview_interval=_preview_interval(p["num_inference_steps"]),
     )
     task.elapsed_seconds = _read_record(result["prompt_record"], "elapsed_seconds")
     task.steps_per_second = _read_record(result["prompt_record"], "steps_per_second")

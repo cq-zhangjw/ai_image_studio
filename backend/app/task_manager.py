@@ -37,10 +37,23 @@ class TaskInfo:
     def bump(self):
         self.version += 1
 
-    def set_progress(self, step: int, total: int, phase: str, percent: Optional[int] = None):
+    def set_progress(
+        self,
+        step: int,
+        total: int,
+        phase: str,
+        percent: Optional[int] = None,
+        preview_url: Optional[str] = None,
+    ):
         if percent is None:
             percent = int(round(step / total * 100)) if total else 0
-        self.progress = TaskProgress(step=step, total=total, percent=min(100, max(0, percent)), phase=phase)
+        self.progress = TaskProgress(
+            step=step,
+            total=total,
+            percent=min(100, max(0, percent)),
+            phase=phase,
+            preview_url=preview_url,
+        )
         self.message = phase
         self.bump()
 

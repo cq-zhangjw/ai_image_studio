@@ -7,6 +7,7 @@ export interface TaskProgress {
   total: number
   percent: number
   phase: string
+  preview_url?: string | null
 }
 
 export interface TaskDetail {

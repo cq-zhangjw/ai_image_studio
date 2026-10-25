@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
@@ -518,7 +518,14 @@ async function submit() {
               <BeforeAfterSlider ref="sliderRef" :before="compareLeft" :labels="{ left: '原图' }" />
             </template>
             <template v-else-if="latestTask && (latestTask.status === 'running' || latestTask.status === 'queued')">
-              <div class="preview-placeholder">
+              <div v-if="latestTask.progress?.preview_url" class="preview-live">
+                <img :src="latestTask.progress.preview_url" alt="生成中预览" />
+                <div class="preview-live-meta">
+                  <span class="live-dot"></span>
+                  <span>采样 {{ latestTask.progress.step }}/{{ latestTask.progress.total }} · {{ latestTask.progress.percent }}%</span>
+                </div>
+              </div>
+              <div v-else class="preview-placeholder">
                 {{ latestTask.status === 'queued' ? '排队中，请稍候…' : '处理中，完成后自动回传展示…' }}
               </div>
             </template>
@@ -935,5 +942,39 @@ textarea {
   color: var(--text-faint);
   font-size: 13px;
   text-align: center;
+}
+.preview-live {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.preview-live img {
+  max-width: 100%;
+  max-height: calc(100% - 34px);
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+.preview-live-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 </style>
