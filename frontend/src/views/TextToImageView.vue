@@ -217,15 +217,22 @@ function navHistory(dir: -1 | 1) {
   const p = preview.value
   if (!p) return
   viewingHistory.value = true
-  // 定位当前选中：优先当前预览批次；无则回退最近一次历史（列表头部）
-  let cur = curHistIndex.value
-  if (cur < 0) cur = 0
-  const n = historyRuns.value.filter((r) => r.images.length).length
+  const n = historyRuns.value.length
   if (!n) return
-  const target = (cur + dir + n) % n
-  const targetRun = historyRuns.value.filter((r) => r.images.length)[target]
-  if (historyRef.value?.selectRun(targetRun.stamp)) {
-    // 回填由 select 事件 → onHistorySelect 完成
+  // 当前预览在完整列表中的位置；预览不存在/已被删时从头部开始
+  let cur = curHistIndex.value
+  if (cur < 0) {
+    const curStamp = p.stamps?.[p.index]
+    cur = curStamp ? historyRuns.value.findIndex((r) => r.stamp === curStamp) : -1
+  }
+  if (cur < 0) cur = 0
+  // 在完整列表上从 cur+dir 起循环跳过空组（删除后当前组可能已无图），避免过滤数组索引错位
+  for (let k = 0; k < n; k++) {
+    const i = (((cur + dir + k * dir) % n) + n) % n
+    const r = historyRuns.value[i]
+    if (r.images.length) {
+      if (historyRef.value?.selectRun(r.stamp)) return
+    }
   }
 }
 
