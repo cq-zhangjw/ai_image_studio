@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
@@ -207,9 +207,47 @@ function stepsLabel(p?: Record<string, any> | null): string {
 }
 
 function doReuse(it: GalleryItem) {
-  if (!it.params) return
-  reuse.setPending(it.type ?? 'text-to-image', it.params)
-  router.push(`/workspace/${it.type ?? 'text-to-image'}`)
+  const params = it.params ?? {}
+  // 未匹配到任务记录时按 params 推断：含参考图 → 图像编辑；否则文生图
+  let type = it.type ?? 'text-to-image'
+  if (!it.type) {
+    const p = params as Record<string, any>
+    if (Array.isArray(p._image_paths) && p._image_paths.length) type = 'edit'
+  }
+  reuse.setPending(type, params)
+  router.push(`/workspace/${type}`)
+}
+
+// ---- 主页删除（独立于历史记录；确认两次后执行） ----
+const delConfirm = ref<Record<string, boolean>>({})
+const delBusy = ref('')
+function imgNameOf(it: GalleryItem): string {
+  return decodeURIComponent(it.url.split('?')[0].split('/').pop() ?? '')
+}
+async function doDelete(it: GalleryItem) {
+  const img = imgNameOf(it)
+  const key = `${it.stamp}:${img}`
+  if (!delConfirm.value[key]) {
+    delConfirm.value[key] = true
+    window.setTimeout(() => {
+      delConfirm.value[key] = false
+    }, 2500)
+    return
+  }
+  if (delBusy.value) return
+  delBusy.value = key
+  try {
+    await api.deleteImage(it.stamp, img)
+    const idx = items.value.findIndex((x) => x.stamp === it.stamp && imgNameOf(x) === img)
+    if (idx >= 0) items.value.splice(idx, 1)
+    if (stats.value.total > 0) stats.value.total -= 1
+    // 灯箱正显示该图则关闭
+    const cur = lightboxIndex.value != null ? filtered.value[lightboxIndex.value] : null
+    if (cur && cur.stamp === it.stamp && imgNameOf(cur) === img) lightboxIndex.value = null
+  } finally {
+    delBusy.value = ''
+    delConfirm.value[key] = false
+  }
 }
 
 function retryImg(e: Event, it: GalleryItem) {
@@ -334,12 +372,21 @@ onUnmounted(() => {
             <span v-if="dimLabel(it.params)" class="meta-param mono">{{ dimLabel(it.params) }}</span>
             <span v-if="stepsLabel(it.params)" class="meta-param mono">{{ stepsLabel(it.params) }}</span>
             <button
-              v-if="it.type === 'text-to-image' && it.params"
+              v-if="it.stamp"
               class="reuse-mini"
               title="一键复制参数去生成同款"
               @click.stop="doReuse(it)"
             >
               ✨ 做同款
+            </button>
+            <button
+              v-if="it.stamp"
+              class="del-mini"
+              :class="{ 'del-confirm': delConfirm[`${it.stamp}:${imgNameOf(it)}`] }"
+              :title="delConfirm[`${it.stamp}:${imgNameOf(it)}`] ? '再次点击确认删除' : '从主页删除该图片'"
+              @click.stop="doDelete(it)"
+            >
+              {{ delConfirm[`${it.stamp}:${imgNameOf(it)}`] ? '确认删除' : '删除' }}
             </button>
           </div>
         </div>
@@ -635,6 +682,28 @@ onUnmounted(() => {
   transform: translateY(-1px);
   filter: brightness(1.12);
 }
+.del-mini {
+  margin-left: 6px;
+  padding: 4px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 999px;
+  background: transparent;
+  color: #ef4444;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.del-mini:hover {
+  transform: translateY(-1px);
+  background: rgba(239, 68, 68, 0.12);
+}
+.del-confirm {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+  color: #fff !important;
+}
 .card-info {
   padding: 12px 14px 14px;
   background: var(--bg-elev);
@@ -655,6 +724,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .meta-tag {
   flex-shrink: 0;
