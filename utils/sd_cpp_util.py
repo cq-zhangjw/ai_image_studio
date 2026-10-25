@@ -51,15 +51,16 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_OUTPUT_ROOT = _PROJECT_ROOT / "outputs"
 
 # 已知 GGUF 组件文件名 -> 自动发现用（按 key 提供给 _auto_model_paths）
+# 模型目录统一为 sd_cpp/models 与 models/gguf（FLUX.2 相关已迁移至 models/gguf）
 KNOWN_MODEL_FILES: dict[str, List[str]] = {
     "diffusion_model": [
         "qwen_image_2.1-Q8_0.gguf",
         "qwen_image_2.1-Q4_K.gguf",
-        "flux-2-klein-4b-Q4_0.gguf",
+        "flux-2-klein-9b-Q8_0.gguf",
     ],
     "llm": [
         "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
-        "Qwen3-4B-Q4_K_M.gguf",
+        "Qwen3-8B-Q4_K_M.gguf",
     ],
     "llm_vision": ["mmproj-Qwen3VL-8B-Instruct-F16.gguf"],
     "vae": [
@@ -67,6 +68,12 @@ KNOWN_MODEL_FILES: dict[str, List[str]] = {
         "flux2-vae.safetensors",
     ],
 }
+
+# 自动发现搜索目录（按优先级）：新模型统一放 models/gguf，qwen 系仍在 sd_cpp/models
+_MODEL_SEARCH_DIRS = [
+    _PROJECT_ROOT / "models" / "gguf",
+    _PROJECT_ROOT / "sd_cpp" / "models",
+]
 
 _RE_SAMPLING_MS = re.compile(r"sampling completed, taking\s+([\d.]+)s")
 _RE_GENERATE_MS = re.compile(r"generate_image completed in\s+([\d.]+)s")
@@ -132,12 +139,12 @@ class SdCppUtil:
             if not p.is_absolute():
                 p = _PROJECT_ROOT / p
             return str(p)
-        # 自动发现
-        model_dir = self.sd_cpp_root / "models"
-        for name in KNOWN_MODEL_FILES.get(key, []):
-            cand = model_dir / name
-            if cand.exists():
-                return str(cand)
+        # 自动发现：models/gguf 与 sd_cpp/models（按 _MODEL_SEARCH_DIRS 顺序）
+        for model_dir in _MODEL_SEARCH_DIRS:
+            for name in KNOWN_MODEL_FILES.get(key, []):
+                cand = model_dir / name
+                if cand.exists():
+                    return str(cand)
         return None
 
     def _require_components(self) -> List[str]:

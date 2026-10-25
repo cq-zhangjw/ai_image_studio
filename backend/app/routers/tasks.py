@@ -112,7 +112,7 @@ async def submit_edit(
     feather: int = Form(20),
     model: str = Form("qwen-image-2.1"),
 ):
-    if model not in ("qwen-image-2.1", "flux2-klein-4b"):
+    if model not in ("qwen-image-2.1", "flux2-klein-9b", "flux2-klein-4b"):
         raise HTTPException(status_code=400, detail={"code": "INVALID_PARAM", "message": f"不支持的模型: {model}"})
     has_single = image is not None or (src_stamp and src_image)
     multi = [f for f in (images or []) if f is not None]
@@ -320,6 +320,8 @@ def execute_task(task) -> list[Path]:
     切模型前先 unload 另一模型（gc + empty_cache）。
     """
     model = task.payload.get("model", "qwen-image-2.1")
+    if model == "flux2-klein-4b":  # 历史任务兼容：4B 任务映射到 9B 引擎
+        model = "flux2-klein-9b"
     # LLM 显存共存策略（docs/06 §3）：大模型任务先卸 LLM，klein/sana 可共存
     if task.type in ("outpaint", "upscale", "upscale-folder") or llm_service.should_unload_for(model):
         llm_service.unload()
@@ -344,7 +346,7 @@ def execute_task(task) -> list[Path]:
             sana_sprint_service.unload()
             ernie_service.unload()
             return moss_service.text_to_image(task)
-        if model == "flux2-klein-4b":
+        if model == "flux2-klein-9b":
             qwen_service.unload()
             z_image_service.unload()
             sana_sprint_service.unload()
@@ -370,7 +372,7 @@ def execute_task(task) -> list[Path]:
         sana_sprint_service.unload()
         return qwen_service.text_to_image(task)
     if task.type == "edit":
-        if model == "flux2-klein-4b":
+        if model == "flux2-klein-9b":
             qwen_service.unload()
             z_image_service.unload()
             sana_sprint_service.unload()

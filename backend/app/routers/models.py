@@ -75,8 +75,8 @@ def get_models():
                 "load_seconds": None,
             },
             {
-                "id": "flux2-klein-4b",
-                "name": "FLUX.2 [klein] 4B",
+                "id": "flux2-klein-9b",
+                "name": "FLUX.2 [klein] 9B",
                 "status": "loaded" if flux2_service.is_loaded() else "ready",
                 "loaded": flux2_service.is_loaded(),
                 "load_seconds": None,

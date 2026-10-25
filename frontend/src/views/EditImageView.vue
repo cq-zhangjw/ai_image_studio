@@ -44,12 +44,12 @@ const latestTask = ref<any>(null)
 // 编辑可用模型（后端白名单）
 const EDIT_MODELS = [
   { value: 'qwen-image-2.1', name: 'Qwen-Image-2.1' },
-  { value: 'flux2-klein-4b', name: 'FLUX.2 [klein] 4B' },
+  { value: 'flux2-klein-9b', name: 'FLUX.2 [klein] 9B' },
 ]
 
 // FLUX.2 klein 走统一编辑（步数建议 4）
 watch(model, (m) => {
-  if (m === 'flux2-klein-4b') steps.value = 4
+  if (m === 'flux2-klein-9b') steps.value = 4
   else steps.value = 24
 })
 

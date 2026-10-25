@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
@@ -78,7 +78,7 @@ const MODEL_STEP_DEFAULT: Record<string, number> = {
   'qwen-image-2.1': 20,
   'ernie-image': 20,
   'moss-image-sft': 30,
-  'flux2-klein-4b': 4,
+  'flux2-klein-9b': 4,
   'z-image-turbo': 8,
   'sana-sprint-1.6b': 2,
   'lumina-image-2.0': 40,
@@ -156,7 +156,7 @@ function onBlurDim(which: 'w' | 'h') {
   }, 4000)
 }
 
-const MODEL_IDS = ['qwen-image-2.1', 'ernie-image', 'moss-image-sft', 'flux2-klein-4b', 'z-image-turbo', 'sana-sprint-1.6b', 'lumina-image-2.0']
+const MODEL_IDS = ['qwen-image-2.1', 'ernie-image', 'moss-image-sft', 'flux2-klein-9b', 'z-image-turbo', 'sana-sprint-1.6b', 'lumina-image-2.0']
 
 const latestTask = ref<any>(null)
 

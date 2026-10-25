@@ -32,7 +32,7 @@ GGUF 模型 → `sd_cpp/models/`（全部走 `hf-mirror.com`）：
 | Qwen 视觉塔（编辑/多图参考必需） | `mmproj-Qwen3VL-8B-Instruct-F16.gguf` | 1.1GB | `Qwen/Qwen3-VL-8B-Instruct-GGUF` |
 | Qwen LLM（编辑指令/视觉链路） | `Qwen3VL-8B-Instruct-Q4_K_M.gguf` | 4.8GB | 同上 |
 | Qwen VAE | `qwen_image_2.1_vae_bf16.safetensors` | 644MB | `Comfy-Org/Qwen-Image-2.1` |
-| FLUX.2 klein（未接入服务，CLI 已验证） | `flux-2-klein-4b-Q4_0.gguf` + `Qwen3-4B-Q4_K_M.gguf` + `flux2-vae.safetensors` | 2.3G+2.3G+320M | `leejet/FLUX.2-klein-4B-GGUF` / `unsloth` / `Comfy-Org/Flux-2-Klein-4B` |
+| FLUX.2 klein 9B（已接入服务 v1.3.2，见 docs/28） | `flux-2-klein-9b-Q8_0.gguf` + `Qwen3-8B-Q4_K_M.gguf` + `flux2-vae.safetensors` → `models/gguf/` | 9.3G+4.7G+320M | `leejet/FLUX.2-klein-9B-GGUF` / `unsloth` / `Comfy-Org/Flux-2-Klein-4B` |
 
 > `black-forest-labs/FLUX.2-dev` gated 仓库 403 不可用；VAE 取自 Comfy-Org 仓库（gated 主仓库不可用）。
 
@@ -74,11 +74,14 @@ backend/app/services/qwen_service.py  # import 改 utils.qwen_21_gguf_util
 
 | 场景 | 规格 | 耗时 | 备注 |
 | --- | --- | --- | --- |
-| klein 文生图 | 768² | 4.1s | 1024²=5.33s |
-| klein 多图融合 | 1024² | 15.6s | CLI 直测 |
+| klein 4B 文生图 | 768² | 4.1s | 1024²=5.33s（已下线，4B 被 9B 替换） |
+| klein 4B 多图融合 | 1024² | 15.6s | CLI 直测（已下线） |
 | **Qwen 多图融合** | 1024²@20 步 | **104.2s**（采样 95.3s） | diffusers 1665s → **快 16 倍** |
 | Qwen 单图编辑 | 864×1088@12 步 | 79.9s（采样 62.6s ≈ 5.2s/步） | E2E 任务 `task_631d07b3818441a3` |
 | Qwen 文生图 | E2E | 15.3s | 任务 `task_901e1d673512438e` |
+| **klein 9B 文生图（v1.3.2）** | 1024²@20 步 | **58.6s** | E2E，Q8_0 量化 |
+| **klein 9B 单图编辑（v1.3.2）** | 864×1088@20 步 | **115.8s** | E2E |
+| **klein 9B 多图融合（v1.3.2）** | 864×1088@20 步 | **290.7s** | E2E，3 参考图 |
 
 多图参考有效性：日志 `preprocess ref[0]/ref[1]` + `Using 'qwen'/'flux2' preset for reference images` 确认 `-r` 可复用。
 

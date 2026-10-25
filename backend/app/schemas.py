@@ -1,4 +1,4 @@
-"""Pydantic 请求/响应模型。"""
+﻿"""Pydantic 请求/响应模型。"""
 
 from typing import List, Optional
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class TextToImageRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=4000)
     negative_prompt: Optional[str] = None
-    model: str = Field("qwen-image-2.1", pattern="^(qwen-image-2.1|ernie-image|moss-image-sft|flux2-klein-4b|z-image-turbo|sana-sprint-1.6b|lumina-image-2.0)$")
+    model: str = Field("qwen-image-2.1", pattern="^(qwen-image-2.1|ernie-image|moss-image-sft|flux2-klein-9b|z-image-turbo|sana-sprint-1.6b|lumina-image-2.0)$")
     category: str = Field(
         "landscape",
         pattern="^(landscape|portrait|animal|architecture|food|sci-fi|fantasy|retro|minimal|cyberpunk|design|work|3d|anime)$",

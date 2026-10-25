@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
@@ -39,7 +39,7 @@ const MODEL_FILTERS = [
   { id: 'qwen-image-2.1', label: 'Qwen-Image-2.1' },
   { id: 'ernie-image', label: 'ERNIE-Image Turbo' },
   { id: 'moss-image-sft', label: 'MOSS-Image' },
-  { id: 'flux2-klein-4b', label: 'FLUX.2 [klein]' },
+  { id: 'flux2-klein-9b', label: 'FLUX.2 [klein]' },
   { id: 'z-image-turbo', label: 'Z-Image Turbo' },
   { id: 'sana-sprint-1.6b', label: 'SANA-Sprint' },
   { id: 'lumina-image-2.0', label: 'Lumina-2.0' },
@@ -95,7 +95,7 @@ function modelFromPath(p?: Record<string, any> | null): string | null {
   const m = s.toLowerCase()
   if (m.includes('ernie')) return 'ernie-image'
   if (m.includes('moss')) return 'moss-image-sft'
-  if (m.includes('flux')) return 'flux2-klein-4b'
+  if (m.includes('flux')) return 'flux2-klein-9b'
   if (m.includes('z-image')) return 'z-image-turbo'
   if (m.includes('sana')) return 'sana-sprint-1.6b'
   if (m.includes('lumina')) return 'lumina-image-2.0'

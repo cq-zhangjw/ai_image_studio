@@ -1,4 +1,4 @@
-"""提示词路由：POST /api/prompt/optimize（优化）、POST /api/prompt/random（AI 随机生成）。
+﻿"""提示词路由：POST /api/prompt/optimize（优化）、POST /api/prompt/random（AI 随机生成）。
 
 同步推理放入线程池执行，避免阻塞 uvicorn 事件循环。
 """
@@ -12,7 +12,7 @@ from ..services import llm_service
 
 router = APIRouter(prefix="/api/prompt", tags=["prompt"])
 
-VALID_TARGETS = {"auto", "qwen-image-2.1", "flux2-klein-4b", "z-image-turbo", "sana-sprint-1.6b", "moss-image-sft"}
+VALID_TARGETS = {"auto", "qwen-image-2.1", "flux2-klein-9b", "z-image-turbo", "sana-sprint-1.6b", "moss-image-sft"}
 
 # 内容分类（docs/14 §2，docs/20 新增 设计/工作/3D/动漫）
 CATEGORIES = [

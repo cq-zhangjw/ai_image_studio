@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 // 模型选择：自定义下拉（深色主题下原生 select 选项文字不清晰，改可控样式）
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useModelStore } from '@/stores/model'
@@ -17,7 +17,7 @@ const DEFAULT_OPTIONS = [
   { value: 'qwen-image-2.1', name: 'Qwen-Image-2.1' },
   { value: 'ernie-image', name: 'ERNIE-Image Turbo' },
   { value: 'moss-image-sft', name: 'MOSS-Image SFT' },
-  { value: 'flux2-klein-4b', name: 'FLUX.2 [klein] 4B' },
+  { value: 'flux2-klein-9b', name: 'FLUX.2 [klein] 9B' },
   { value: 'z-image-turbo', name: 'Z-Image Turbo' },
   { value: 'sana-sprint-1.6b', name: 'SANA-Sprint 1.6B' },
   { value: 'lumina-image-2.0', name: 'Lumina-Image 2.0' },
