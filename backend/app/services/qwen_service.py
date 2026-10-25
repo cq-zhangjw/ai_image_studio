@@ -1,11 +1,13 @@
-"""Qwen-Image-2.1 推理服务封装：复用 utils.qwen_21_util，接入任务进度。"""
+"""Qwen-Image-2.1 推理服务封装：复用 utils.qwen_21_gguf_util，接入任务进度。
+
+底层为 stable-diffusion.cpp GGUF 引擎（sd-cli 子进程），
+与 utils/qwen_21_gguf_util.py 接口兼容，服务层无需改动任务逻辑。
+"""
 
 import gc
 import sys
 from pathlib import Path
 from typing import Callable, List, Optional
-
-import torch
 
 from .. import config
 
@@ -14,7 +16,7 @@ _PROJECT_ROOT = config.PROJECT_ROOT
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from utils.qwen_21_util import QwenImage21Util  # noqa: E402
+from utils.qwen_21_gguf_util import QwenImage21Util  # noqa: E402
 
 _util: Optional[QwenImage21Util] = None
 
@@ -22,10 +24,7 @@ _util: Optional[QwenImage21Util] = None
 def get_util() -> QwenImage21Util:
     global _util
     if _util is None:
-        _util = QwenImage21Util(
-            model_path=str(config.QWEN_MODEL_DIR),
-            output_root=config.OUTPUT_DIR,
-        )
+        _util = QwenImage21Util(output_root=config.OUTPUT_DIR)
     return _util
 
 
@@ -41,22 +40,16 @@ def _cb(task, cb: Optional[Callable[[int, int], None]] = None):
 
 
 def is_loaded() -> bool:
+    """GGUF 子进程引擎无持久驻留；util 构造后即可用（首次生成时加载）。"""
     global _util
-    return _util is not None and _util._pipe is not None  # noqa: SLF001
+    return _util is not None
 
 
 def unload() -> None:
-    """卸载模型，释放显存（切换模型时调用）。"""
+    """释放 util（子进程退出时自动释放显存）。"""
     global _util
-    if _util is not None and _util._pipe is not None:  # noqa: SLF001
-        try:
-            _util._pipe = None  # noqa: SLF001
-        except Exception:  # noqa: BLE001
-            pass
     _util = None
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 def text_to_image(task) -> List[Path]:

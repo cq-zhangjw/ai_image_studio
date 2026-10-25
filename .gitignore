@@ -21,6 +21,9 @@ models/
 outputs/
 db/
 
+# ---- stable-diffusion.cpp runtime & GGUF weights (huge; download steps in docs/26) ----
+sd_cpp/
+
 # ---- Third-party vendored binaries (re-download as needed; see README) ----
 vendor/
 

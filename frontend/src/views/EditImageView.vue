@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
@@ -26,10 +26,10 @@ const srcImage = ref('')
 
 const prompt = ref('')
 const imageFile = ref<File | null>(null)
-const fusionFiles = ref<(File | null)[]>(Array(9).fill(null))
+const fusionFiles = ref<(File | null)[]>(Array(6).fill(null))
 // 融合历史素材还原（服务端引用模式）：九宫格显示历史素材 URL，提交时用 src_stamp + src_images 引用
 const fusionSrcMode = ref(false)
-const fusionSrcUrls = ref<string[]>(Array(9).fill(''))
+const fusionSrcUrls = ref<string[]>(Array(6).fill(''))
 const model = ref('qwen-image-2.1')
 const steps = ref(24)
 const seed = ref(0) // 0 = 随机
@@ -155,6 +155,15 @@ const compareLeft = computed(() => {
 // ---- 历史导航：‹ › + 键盘 ←/→，默认显示第一组（最新） ----
 const galleryRef = ref<InstanceType<typeof HistoryGallery> | null>(null)
 const sliderRef = ref<InstanceType<typeof BeforeAfterSlider> | null>(null)
+
+// ---- 预览图点击放大（lightbox） ----
+const lightboxUrl = ref('')
+function openLightbox(url: string) {
+  if (url) lightboxUrl.value = url
+}
+function closeLightbox() {
+  lightboxUrl.value = ''
+}
 const histRuns = ref<OutputRun[]>([])
 const curHistIndex = ref(-1)
 
@@ -268,9 +277,9 @@ function onSelect(p: { url: string; stamp: string; image: string; prompt: string
     if (p.sources?.length) {
       fusionSrcMode.value = true
       srcStamp.value = p.stamp
-      fusionSrcUrls.value = Array(9).fill('')
+      fusionSrcUrls.value = Array(6).fill('')
       p.sources.forEach((s, si) => {
-        if (si < 9) fusionSrcUrls.value[si] = assetUrl(`/api/outputs/${p.stamp}/${s}`)
+        if (si < 6) fusionSrcUrls.value[si] = assetUrl(`/api/outputs/${p.stamp}/${s}`)
       })
     } else {
       fusionSrcMode.value = false
@@ -395,7 +404,7 @@ async function submit() {
         </template>
         <template v-else>
           <div class="fusion-slots">
-            <div v-for="i in 9" :key="i" class="fusion-slot">
+            <div v-for="i in 6" :key="i" class="fusion-slot">
               <FileDropUpload
                 :preview-url="fusionSlotUrl(i - 1)"
                 :hide-hint="true"
@@ -464,6 +473,7 @@ async function submit() {
                       :src="u"
                       class="fc-thumb"
                       alt="素材"
+                      @click="openLightbox(u)"
                     />
                   </div>
                   <div v-else-if="fusionUploaded.length" class="fc-grid">
@@ -473,13 +483,20 @@ async function submit() {
                       :src="fusionUrlOf(f)"
                       class="fc-thumb"
                       alt="素材"
+                      @click="openLightbox(fusionUrlOf(f))"
                     />
                   </div>
                   <div v-else class="preview-placeholder">上传图片后显示素材</div>
                 </div>
                 <div class="fc-side">
                   <div class="fc-label">融合结果</div>
-                  <img v-if="resultUrl" :src="resultUrl" class="fc-result" alt="融合结果" />
+                  <img
+                    v-if="resultUrl"
+                    :src="resultUrl"
+                    class="fc-result"
+                    alt="融合结果"
+                    @click="openLightbox(resultUrl)"
+                  />
                   <div v-else class="preview-placeholder">等待融合结果</div>
                 </div>
               </div>
@@ -493,7 +510,7 @@ async function submit() {
                 :labels="{ left: '原图', right: '结果' }"
               />
               <div v-else class="single-result">
-                <img :src="resultUrl" class="edit-result" alt="编辑结果" />
+                <img :src="resultUrl" class="edit-result" alt="编辑结果" @click="openLightbox(resultUrl)" />
               </div>
             </template>
             <template v-else-if="compareLeft">
@@ -543,6 +560,12 @@ async function submit() {
         </div>
       </div>
     </section>
+
+    <!-- 预览图点击放大（lightbox） -->
+    <div v-if="lightboxUrl" class="lightbox" @click="closeLightbox">
+      <button type="button" class="lightbox-close" title="关闭" @click.stop="closeLightbox">×</button>
+      <img :src="lightboxUrl" alt="预览放大" class="lightbox-img" @click.stop />
+    </div>
   </div>
 </template>
 
@@ -813,21 +836,26 @@ textarea {
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   overflow-y: auto;
-  align-content: start;
+  align-content: center;
 }
 .fc-thumb {
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
+  object-fit: scale-down;
   border-radius: 6px;
   border: 1px solid var(--border);
+  background: #000;
+  cursor: zoom-in;
 }
 .fc-result {
   flex: 1;
   min-height: 0;
   width: 100%;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #000;
+  cursor: zoom-in;
 }
 .single-result {
   flex: 1;
@@ -841,7 +869,54 @@ textarea {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  cursor: zoom-in;
+}
+/* 预览图点击放大 */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  animation: lightbox-in 0.15s ease;
+}
+.lightbox-img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
   border-radius: 8px;
+  cursor: zoom-out;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+.lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(15, 20, 25, 0.55);
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 3px;
+}
+.lightbox-close:hover {
+  background: var(--danger);
+}
+@keyframes lightbox-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .history-area {
   min-height: 0;

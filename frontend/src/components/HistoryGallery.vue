@@ -174,6 +174,13 @@ function sourcesOf(run: OutputRun): string[] {
   return run.sources?.length ? run.sources : run.source ? [run.source] : []
 }
 
+// 素材缩略图内联高度：容器 112px - 内边距 2px，按行数均分（多图融合竖直等分）
+function thumbStyle(n: number) {
+  const rows = n > 4 ? Math.ceil(n / 2) : n
+  const h = (112 - 2 - (rows - 1)) / rows
+  return { height: `${Math.max(16, Math.floor(h))}px` }
+}
+
 function goto(action: 'upscale' | 'edit', run: OutputRun, image: string) {
   emit('goto', { stamp: run.stamp, image, action })
 }
@@ -296,11 +303,13 @@ function captionText(prompt: string): string {
           <!-- 左：缩略图（编辑/放大历史含原图副本时双图并列：原图 | 结果；多图融合 → 素材网格 | 结果） -->
           <div class="hg-thumb" :class="{ dual: sourcesOf(run).length > 0 }">
             <template v-if="sourcesOf(run).length > 1">
-              <div class="hg-src-grid">
+              <div class="hg-src-grid" :class="{ many: sourcesOf(run).length > 4 }">
+                <span class="hg-src-count">{{ sourcesOf(run).length }} 张</span>
                 <img
                   v-for="(s, si) in sourcesOf(run)"
                   :key="si"
                   :src="`${assetUrl(`${run.path}/${s}`)}?t=${run.stamp}`"
+                  :style="thumbStyle(sourcesOf(run).length)"
                   :alt="`素材 ${si + 1}`"
                   loading="lazy"
                   decoding="async"
@@ -433,6 +442,7 @@ function captionText(prompt: string): string {
 }
 .hg-thumb {
   width: 88px;
+  height: 112px; /* hg-item 128px - 上下 padding 16px，显式高度保证内部 1fr/百分比可用 */
   flex-shrink: 0;
   align-self: stretch;
   border-radius: 8px;
@@ -442,33 +452,68 @@ function captionText(prompt: string): string {
 }
 .hg-thumb.dual {
   display: flex;
+  align-items: stretch;
 }
-.hg-thumb.dual img {
+/* 右侧结果图（dual 直接子 img） */
+.hg-thumb.dual > img {
   flex: 1;
-  width: auto;
   min-width: 0;
+  width: auto;
+  object-fit: contain;
+  align-self: stretch;
+  background: #000;
 }
 .hg-thumb-sep {
   width: 2px;
   flex-shrink: 0;
   background: var(--border-strong);
 }
-/* 多图融合素材网格（左半） */
+/* 多图融合素材网格（左半）：flex 竖直等分，高度由内联样式显式指定，contain 显示全图 */
 .hg-src-grid {
   flex: 1;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-auto-rows: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 1px;
   padding: 1px;
   box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
 }
-.hg-thumb img {
+.hg-src-grid.many {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.hg-src-grid img {
+  width: 100%;
+  flex-shrink: 0;
+  object-fit: contain;
+  display: block;
+  background: #000;
+}
+.hg-src-grid.many img {
+  width: 50%;
+}
+.hg-src-count {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(15, 20, 25, 0.65);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  pointer-events: none;
+}
+/* 单图缩略图 */
+.hg-thumb:not(.dual) img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
+  background: #000;
 }
 .hg-item-live {
   opacity: 1;
