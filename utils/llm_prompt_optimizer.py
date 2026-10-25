@@ -1,8 +1,9 @@
-"""Qwen3.5-4B-Instruct 提示词优化封装：GPU BF16 推理、懒加载单例、超时保护。
+"""提示词优化 LLM 封装：llama.cpp GGUF 子进程推理（用户封装 guff_util）。
 
-供后端 llm_service 调用；与图像模型遵循显存共存/卸载策略（见 docs/06 §3）。
+供后端 llm_service 调用。底层为 llama-cli.exe + Qwen3.8-9B GGUF（utils/guff_util.py），
+每次推理为独立子进程：不驻留显存、与图像模型天然共存（无需卸载策略）。
 用法：
-    opt = PromptOptimizer(model_path="models/Qwen3.5-4B-Instruct")
+    opt = PromptOptimizer()
     out = opt.optimize("夏日冰饮节海报", target_model="auto")
 """
 
@@ -12,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Optional, Union
 
-import torch
+from utils import guff_util  # 用户封装：llama-cli 子进程 GGUF 推理（同包）
 
 # target_model -> 模板偏好描述（决定优化输出风格）
 TARGET_PREFS = {
@@ -23,21 +24,10 @@ TARGET_PREFS = {
     "sana-sprint-1.6b": "英文为主，简洁明确，避免复杂文字要求（该模型文字渲染弱）",
 }
 
-SYSTEM_TEMPLATE = """你是专业的 AI 图像生成提示词优化器。将用户描述扩展为可直接用于扩散模型的详细提示词。
-规则：
-1) 严格保留用户核心意图与主体，不得擅自增删主体或改变主题。
-2) 补充细节：主体外观与动作、场景环境、光线氛围、构图布局、艺术风格、色彩基调、镜头语言（如适用）、质感纹理。
-3) 输出为一段连贯文字，120-220 词，直接给出结果，不解释、不评价、不加前缀。
-4) 目标模型偏好：{pref}"""
+SYSTEM_TEMPLATE = """你是专业的 AI 图像生成提示词优化器。请将用户描述直接扩写为可用于扩散模型的详细提示词并输出结果：严格保留用户核心意图与主体，补充主体外观动作、场景环境、光线氛围、构图布局、艺术风格、色彩基调、镜头语言、质感纹理等细节，输出 120-220 词的一段连贯文字，不加任何前缀。目标模型偏好：{pref}"""
 
 
-RANDOM_SYSTEM_TEMPLATE = """你是专业的 AI 图像提示词创意生成器，面向「图片展示网站」的每日一图栏目。
-任务：根据给定的分类与约束，随机生成一条全新、有创意的图像生成提示词。
-规则：
-1) 每次生成必须与之前明显不同，避免套路化；可在主体、场景、光线、构图、色彩、质感上大胆组合。
-2) 分类：{category}。风格倾向：{style}。{text_rule}
-3) 输出为一段连贯的中文描述（80-180 字），包含主体、场景、光线、构图、色彩基调与风格细节；直接给出结果，不解释、不评价、不加前缀。
-4) 若画面需要文字：明确写出画面中要出现的文字内容（标题/标语），并强调文字清晰、准确、可读。"""
+RANDOM_SYSTEM_TEMPLATE = """你是专业的 AI 图像提示词创意生成器，面向「图片展示网站」的每日一图栏目。请根据分类与约束直接生成一条全新、有创意的图像生成提示词并输出结果：分类 {category}，风格倾向 {style}；每次生成明显不同避免套路化，可在主体、场景、光线、构图、色彩、质感上大胆组合；{text_rule}；输出一段连贯中文描述（80-180 字），包含主体、场景、光线、构图、色彩基调与风格细节，不加任何前缀；若画面需要文字则明确写出文字内容并强调清晰、准确、可读。"""
 
 # 布局 JSON（高密度文字海报）模板：输出给 MOSS-Image 的布局提示词
 LAYOUT_SYSTEM_TEMPLATE = """你是专业的 AI 海报布局规划器。用户给出海报需求，你输出 MOSS-Image 模型可读的「布局 JSON 提示词」，精确控制每个文字/元素的位置。
@@ -82,7 +72,11 @@ def _extract_layout_json(raw: str) -> str:
 
 
 class PromptOptimizer:
-    """Qwen3.5-4B-Instruct 提示词优化器（懒加载单例，GPU BF16）。"""
+    """提示词优化器：llama.cpp GGUF 子进程推理（guff_util）。
+
+    - 子进程模式：构造即就绪（loaded=True）、unload() 为空操作、不驻留显存；
+    - 与图像模型天然共存：llm_service.should_unload_for 应返回 False（见 llm_service）。
+    """
 
     def __init__(
         self,
@@ -91,45 +85,52 @@ class PromptOptimizer:
         max_new_tokens: int = 256,
         temperature: float = 0.7,
     ) -> None:
-        if model_path is None:
-            local = Path(__file__).resolve().parent.parent / "models" / "Qwen3.5-4B-Instruct"
-            model_path = local if local.exists() else "Qwen/Qwen3.5-4B-Instruct"
-        self.model_path = str(model_path)
-        self.device = device if torch.cuda.is_available() else "cpu"
+        # model_path 由 guff_util 内部固定路径决定；保留参数以兼容旧调用
+        self.model_path = str(model_path) if model_path else "llama-cpp (guff_util)"
+        self.device = device
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
-        self._pipe = None
         self._load_time_seconds: Optional[float] = None
+        self._ready = True
+
+    # ------------------------------------------------------------------ #
+    def _complete(
+        self,
+        system: str,
+        user: str,
+        max_new_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> str:
+        """llama.cpp 子进程推理：纯文本任务指令格式（实测指令跟随最佳）。"""
+        prompt_text = (
+            f"{system}\n"
+            f"用户输入：{user}\n"
+            f"请直接输出结果，不要复述或引用任何规则。"
+        )
+        t0 = time.perf_counter()
+        result = guff_util.run_llama_cpp(
+            max_token=max_new_tokens or self.max_new_tokens,
+            prompt=prompt_text,
+            reasoning=False,
+        )
+        self._load_time_seconds = max(self._load_time_seconds or 0, time.perf_counter() - t0)
+        return result.strip()
 
     # ------------------------------------------------------------------ #
     def _load(self):
-        if self._pipe is not None:
-            return self._pipe
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        t0 = time.perf_counter()
-        tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-        model = AutoModelForCausalLM.from_pretrained(
-            self.model_path,
-            torch_dtype=torch.bfloat16,
-        )
-        model = model.to(self.device)
-        model.eval()
-        self._pipe = (model, tokenizer)
-        self._load_time_seconds = time.perf_counter() - t0
-        print(f"[prompt-llm] model loaded in {self._load_time_seconds:.1f}s ({self.device})")
-        return self._pipe
+        """兼容旧调用：子进程模式无需预加载。"""
+        if self._ready:
+            return None
+        self._ready = True
+        return None
 
     def unload(self) -> None:
-        """释放模型与显存（切换图像模型时由 service 层调用）。"""
-        if self._pipe is not None:
-            self._pipe = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        """子进程模式：无驻留显存，空操作。"""
+        self._ready = False
 
     @property
     def loaded(self) -> bool:
-        return self._pipe is not None
+        return self._ready
 
     @property
     def load_time_seconds(self) -> Optional[float]:
@@ -149,7 +150,6 @@ class PromptOptimizer:
         layout=True 时返回「布局 JSON 提示词」（MOSS 高密度文字海报用）：
         返回 {"optimized": str(json), "elapsed_seconds": float, "layout": True}
         """
-        model, tokenizer = self._load()
         if layout:
             system = LAYOUT_SYSTEM_TEMPLATE
             max_new_tokens = max_new_tokens or 1600
@@ -157,28 +157,10 @@ class PromptOptimizer:
         else:
             pref = TARGET_PREFS.get(target_model, TARGET_PREFS["auto"])
             system = SYSTEM_TEMPLATE.format(pref=pref)
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ]
-        text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
-        )
-        inputs = tokenizer(text, return_tensors="pt").to(self.device)
 
         t0 = time.perf_counter()
-        with torch.inference_mode():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens or self.max_new_tokens,
-                temperature=temperature if temperature is not None else self.temperature,
-                top_p=0.9,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
+        result = self._complete(system, prompt, max_new_tokens, temperature)
         elapsed = time.perf_counter() - t0
-        gen = outputs[0][inputs["input_ids"].shape[-1]:]
-        result = tokenizer.decode(gen, skip_special_tokens=True).strip()
         if layout:
             result = _extract_layout_json(result)
             return {"optimized": result, "elapsed_seconds": round(elapsed, 2), "layout": True}
@@ -186,13 +168,8 @@ class PromptOptimizer:
 
     @staticmethod
     def gpu_memory_info() -> str:
-        if not torch.cuda.is_available():
-            return "CUDA not available"
-        return (
-            f"allocated={torch.cuda.memory_allocated() / 2**20:.0f}MiB "
-            f"reserved={torch.cuda.memory_reserved() / 2**20:.0f}MiB "
-            f"max_allocated={torch.cuda.max_memory_allocated() / 2**20:.0f}MiB"
-        )
+        """llama.cpp 子进程显存：进程运行期间占显存，结束后释放；返回进程名说明。"""
+        return "llama-cli.exe (subprocess, transient VRAM)"
 
     # ------------------------------------------------------------------ #
     def random_generate(
@@ -207,35 +184,17 @@ class PromptOptimizer:
 
         返回 {"prompt": str, "elapsed_seconds": float}
         """
-        model, tokenizer = self._load()
         text_rule = (
             "画面需要包含清晰可读的文字（标题或标语，如品牌名/活动名），文字内容请具体给出，并强调排版美观。"
             if with_text
             else "画面不要包含任何文字。"
         )
-        messages = [
-            {
-                "role": "system",
-                "content": RANDOM_SYSTEM_TEMPLATE.format(category=category, style=style or "随机探索", text_rule=text_rule),
-            },
-            {"role": "user", "content": f"分类：{category}；风格倾向：{style or '不限'}。请生成一条每日一图提示词。"},
-        ]
-        text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        system = RANDOM_SYSTEM_TEMPLATE.format(
+            category=category, style=style or "随机探索", text_rule=text_rule
         )
-        inputs = tokenizer(text, return_tensors="pt").to(self.device)
+        user = f"分类：{category}；风格倾向：{style or '不限'}。请生成一条每日一图提示词。"
 
         t0 = time.perf_counter()
-        with torch.inference_mode():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens or 220,
-                temperature=temperature if temperature is not None else 0.9,
-                top_p=0.92,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
+        result = self._complete(system, user, max_new_tokens, temperature)
         elapsed = time.perf_counter() - t0
-        gen = outputs[0][inputs["input_ids"].shape[-1] :]
-        result = tokenizer.decode(gen, skip_special_tokens=True).strip()
         return {"prompt": result, "elapsed_seconds": round(elapsed, 2)}

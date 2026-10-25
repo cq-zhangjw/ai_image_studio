@@ -24,6 +24,9 @@ db/
 # ---- stable-diffusion.cpp runtime & GGUF weights (huge; download steps in docs/26) ----
 sd_cpp/
 
+# ---- llama.cpp runtime (huge; llama-cli.exe + impl dll; download steps in docs/27) ----
+llama-cpp/
+
 # ---- Third-party vendored binaries (re-download as needed; see README) ----
 vendor/
 

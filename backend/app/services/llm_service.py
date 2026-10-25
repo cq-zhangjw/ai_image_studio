@@ -1,4 +1,4 @@
-"""提示词优化 LLM 服务：Qwen3.5-4B-Instruct（GPU 推理，懒加载单例）。
+"""提示词优化 LLM 服务：llama.cpp GGUF 子进程推理（utils.guff_util + Qwen3.8-9B GGUF）。
 
 显存策略（docs/06 §3）：
     - 优化请求到达时若 LLM 未加载，先卸载驻留图像模型再加载 LLM，之后 LLM 驻留；
@@ -22,7 +22,7 @@ from utils.llm_prompt_optimizer import PromptOptimizer  # noqa: E402
 _util: PromptOptimizer | None = None
 
 # 与 LLM(~8GB) 无法共存的图像模型 id（其余可共存）
-_CONFLICT_MODELS = {"qwen-image-2.1", "z-image-turbo", "ernie-image", "moss-image-sft"}
+# llama.cpp 子进程模式：不驻留显存，无需显存共存/卸载策略（见 should_unload_for）
 
 
 def get_util() -> PromptOptimizer:
@@ -40,20 +40,13 @@ def is_loaded() -> bool:
 
 
 def should_unload_for(model_id: str) -> bool:
-    """图像任务执行前判断：该模型是否需先卸载 LLM 腾显存。"""
-    return is_loaded() and model_id in _CONFLICT_MODELS
+    """llama.cpp 子进程模式：不驻留显存，图像任务无需卸载 LLM。"""
+    return False
 
 
 def ensure_ready() -> None:
-    """确保 LLM 可加载：klein/sana 驻留时可共存；qwen/z-image/ernie 驻留时先卸载。"""
-    if is_loaded():
-        return
-    from . import qwen_service, upscale_service, z_image_service
-
-    for svc in (qwen_service, z_image_service, upscale_service):
-        if svc.is_loaded():
-            svc.unload()
-    get_util()  # 触发加载
+    """子进程模式：构造即就绪，无需预加载或卸载图像模型。"""
+    get_util()
 
 
 def unload() -> None:
@@ -66,8 +59,7 @@ def unload() -> None:
             pass
     _util = None
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # 子进程模式：无驻留显存，无需 empty_cache
 
 
 def optimize(prompt: str, target_model: str = "auto", layout: bool = False) -> dict:
@@ -78,7 +70,7 @@ def optimize(prompt: str, target_model: str = "auto", layout: bool = False) -> d
         "original": prompt,
         "optimized": result["optimized"],
         "elapsed_seconds": result["elapsed_seconds"],
-        "model": "qwen3.5-4b-instruct",
+        "model": "Qwen3.8-9B-GGUF (llama.cpp)",
         "layout": bool(result.get("layout")),
     }
     if util.load_time_seconds is not None:
@@ -95,7 +87,7 @@ def random_prompt(category: str = "landscape", style: str = "", with_text: bool 
         "elapsed_seconds": result["elapsed_seconds"],
         "category": category,
         "with_text": with_text,
-        "model": "qwen3.5-4b-instruct",
+        "model": "Qwen3.8-9B-GGUF (llama.cpp)",
     }
     if util.load_time_seconds is not None:
         out["model_load_seconds"] = round(util.load_time_seconds, 2)
