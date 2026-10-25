@@ -214,6 +214,8 @@ function doReuse(it: GalleryItem) {
     const p = params as Record<string, any>
     if (Array.isArray(p._image_paths) && p._image_paths.length) type = 'edit'
   }
+  // 把本图直链一并带过去：文生图页回显参照，编辑页作为素材原图（复用 stamp+img 带入链路）
+  ;(params as Record<string, any>)._preview_url = it.url
   reuse.setPending(type, params)
   router.push(`/workspace/${type}`)
 }

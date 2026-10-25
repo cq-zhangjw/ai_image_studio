@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, assetUrl } from '@/api/client'
 import { useTaskStore } from '@/stores/task'
+import { useReuseStore } from '@/stores/reuse'
 import type { OutputRun } from '@/types'
 import ParamNumberField from '@/components/ParamNumberField.vue'
 import BeforeAfterSlider from '@/components/BeforeAfterSlider.vue'
@@ -142,6 +143,35 @@ watch(
   },
   { immediate: true },
 )
+
+const reuse = useReuseStore()
+// 主页"做同款"带入：复用路由 query 带入的同一链路（stamp+img → 素材原图 + 跳过历史覆盖）
+function applyReuse() {
+  const p = reuse.consume()
+  if (!p || p.type !== 'edit') return
+  const q = (p.params ?? {}) as Record<string, any>
+  if (q.model) model.value = String(q.model)
+  if (q.num_inference_steps) steps.value = Number(q.num_inference_steps)
+  if (q.seed) seed.value = Number(q.seed)
+  if (q.prompt) prompt.value = String(q.prompt)
+  // 主页带过来的是产物直链（/api/outputs/<stamp>/<img>?t=...）
+  const src = String(q._preview_url ?? '')
+  if (src) {
+    const seg = src.split('?')[0].split('/')
+    const img = decodeURIComponent(seg.pop() ?? '')
+    const s = seg.pop() ?? ''
+    if (s && img) {
+      jumpedFromQuery.value = true
+      srcMode.value = true
+      srcStamp.value = s
+      srcImage.value = img
+      originalUrl.value = src
+      resultUrl.value = ''
+      histBefore.value = ''
+      nextTick(() => sliderRef.value?.setPos(100))
+    }
+  }
+}
 
 const compareLeft = computed(() => {
   if (histBefore.value) return histBefore.value
@@ -327,6 +357,7 @@ function onKeydown(e: KeyboardEvent) {
   else if (e.key === 'ArrowRight') navHistory(1)
 }
 onMounted(() => {
+  applyReuse()
   window.addEventListener('keydown', onKeydown)
   // 组件挂载兜底：query 带入的原图，滑块拉到最右侧（immediate watch 可能早于挂载）
   if (jumpedFromQuery.value) nextTick(() => sliderRef.value?.setPos(100))

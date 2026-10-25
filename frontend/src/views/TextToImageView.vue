@@ -205,8 +205,8 @@ const curHistIndex = computed(() => {
 
 function onHistoryLoaded(runs: OutputRun[]) {
   historyRuns.value = runs
-  // 默认展示最近一条历史（仅当当前没有任何预览时，避免覆盖本次会话生成结果）
-  if (!preview.value && !store.lastResult?.outputs?.length) {
+  // 默认展示最近一条历史（仅当当前没有任何预览、且没有从主页"做同款"回填时，避免覆盖带入内容）
+  if (!preview.value && !store.lastResult?.outputs?.length && !reuseApplied.value) {
     const first = runs.find((r) => r.images.length)
     if (first) historyRef.value?.selectRun(first.stamp)
   }
@@ -371,11 +371,28 @@ function fillParams(q: Record<string, any>) {
   }
   if (q.num_inference_steps) steps.value = Number(q.num_inference_steps)
   if (q.seed) seed.value = Number(q.seed)
+  // 主页"做同款"带入的图：回显到结果区作为参照（不进入历史选中逻辑）
+  if (q._preview_url) {
+    const seg = String(q._preview_url).split('?')[0].split('/')
+    const name = decodeURIComponent(seg.pop() ?? '')
+    const stamp = seg.pop() ?? ''
+    preview.value = {
+      urls: [String(q._preview_url)],
+      stamps: [stamp],
+      names: [name],
+      index: 0,
+      prompt: String(q.prompt ?? ''),
+      pinned: false,
+    }
+  }
 }
+
+const reuseApplied = ref(false)
 
 function applyReuse() {
   const p = reuse.consume()
   if (!p || p.type !== 'text-to-image') return
+  reuseApplied.value = true
   fillParams(p.params)
 }
 
